@@ -1,0 +1,40 @@
+# Private research, credentials, and generated media
+.env
+.env.*
+!.env.example
+.book-automation-state.json
+data/book-pipeline.csv
+data/.book-pipeline-backup-*.csv
+assets/
+assets/reference-videos/
+episodes/*
+!episodes/README.md
+.agents/skills/
+skills-lock.json
+tmp/
+docs/superpowers/
+
+# Local episode media if a folder is explicitly force-added later
+episodes/*/images/
+episodes/*/audio/
+episodes/*/renders/
+episodes/*/frames/
+
+# Dependency and build output
+node_modules/
+dist/
+build/
+.cache/
+.parcel-cache/
+tmp/
+
+# Runtime and render artifacts
+*.log
+*.tmp
+*.mp4
+*.mov
+*.wav
+*.mp3
+
+# OS/editor noise
+.DS_Store

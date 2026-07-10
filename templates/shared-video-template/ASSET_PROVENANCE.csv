@@ -1,0 +1,9 @@
+path,generation_date,generation_tool,prompt_id,human_review,redistribution_decision
+intro/media/intro-background.png,2026-07,AI image generation,template-opening-atmosphere,reviewed,project-generated-demo
+intro/media/pages/scroll-01.png,2026-07,AI image generation,template-scroll-atmosphere-01,reviewed,project-generated-demo
+intro/media/pages/scroll-02.png,2026-07,AI image generation,template-scroll-atmosphere-02,reviewed,project-generated-demo
+intro/media/pages/scroll-03.png,2026-07,AI image generation,template-scroll-atmosphere-03,reviewed,project-generated-demo
+intro/media/pages/scroll-04.png,2026-07,AI image generation,template-scroll-atmosphere-04,reviewed,project-generated-demo
+intro/media/pages/scroll-05.png,2026-07,AI image generation,template-scroll-atmosphere-05,reviewed,project-generated-demo
+intro/media/pages/scroll-06.png,2026-07,AI image generation,template-scroll-atmosphere-06,reviewed,project-generated-demo
+intro/media/pages/result.png,2026-07,AI image generation,template-result-atmosphere,reviewed,project-generated-demo

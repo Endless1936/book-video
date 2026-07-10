@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=720, height=960" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      @font-face {
+        font-family: "DeYiHei";
+        src: local("DeYiHei"), local("DeYi Hei"), local("德意黑");
+      }
+
+      @font-face {
+        font-family: "德意黑";
+        src: local("德意黑"), local("DeYiHei"), local("DeYi Hei");
+      }
+
+      @font-face {
+        font-family: "STHeiti";
+        src: local("STHeiti"), local("STHeitiSC-Medium");
+      }
+
+      @font-face {
+        font-family: "Hiragino Sans GB";
+        src: local("Hiragino Sans GB");
+      }
+
+      html,
+      body {
+        width: 720px;
+        height: 960px;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      body {
+        font-family: "DeYiHei", "德意黑", "STHeiti", "Hiragino Sans GB", sans-serif;
+        color: #fff;
+      }
+
+      #root {
+        position: relative;
+        width: 720px;
+        height: 960px;
+        overflow: hidden;
+        background: #000;
+      }
+
+      .hero-full,
+      .image-piece,
+      .page-bg {
+        position: absolute;
+        inset: 0;
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+      }
+
+      .hero-full,
+      .image-piece {
+        background-image: url("media/intro-background.png");
+      }
+
+      .hero-full {
+        opacity: 0;
+        z-index: 0;
+      }
+
+      .black-cover {
+        position: absolute;
+        inset: 0;
+        background: #000;
+        opacity: 0;
+        z-index: 2;
+      }
+
+      .piece-stage {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        z-index: 1;
+        perspective: 900px;
+      }
+
+      .image-piece {
+        opacity: 1;
+        will-change: transform, opacity;
+        overflow: hidden;
+        transform-style: preserve-3d;
+        filter: brightness(1.08) saturate(1.08) contrast(1.03) drop-shadow(0 12px 18px rgba(0, 0, 0, 0.52));
+      }
+
+      .image-piece::before,
+      .image-piece::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      .image-piece::before {
+        background-image: url("media/intro-background.png");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        opacity: 0.23;
+        mix-blend-mode: screen;
+        filter: blur(1.1px) brightness(1.24) contrast(1.08);
+        transform: translate3d(var(--glass-x, 0), var(--glass-y, 0), 0) scale(1.018);
+      }
+
+      .image-piece::after {
+        background:
+          linear-gradient(var(--shine-angle, 118deg), rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.12) 18%, rgba(255, 255, 255, 0.02) 43%, rgba(31, 52, 64, 0.18) 100%),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0) 7%, rgba(0, 0, 0, 0) 92%, rgba(0, 0, 0, 0.28)),
+          linear-gradient(0deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0) 8%, rgba(0, 0, 0, 0) 89%, rgba(0, 0, 0, 0.24));
+        opacity: 0.42;
+        mix-blend-mode: soft-light;
+      }
+
+      .p1 { --glass-x: -8px; --glass-y: 3px; --shine-angle: 124deg; clip-path: polygon(0 0, 30% 0, 22% 28%, 0 23%); }
+      .p2 { --glass-x: 5px; --glass-y: -7px; --shine-angle: 108deg; clip-path: polygon(27% 0, 56% 0, 48% 30%, 20% 29%); }
+      .p3 { --glass-x: -6px; --glass-y: -4px; --shine-angle: 132deg; clip-path: polygon(53% 0, 80% 0, 73% 32%, 47% 30%); }
+      .p4 { --glass-x: 8px; --glass-y: 5px; --shine-angle: 116deg; clip-path: polygon(77% 0, 100% 0, 100% 30%, 72% 33%); }
+      .p5 { --glass-x: 7px; --glass-y: 8px; --shine-angle: 136deg; clip-path: polygon(0 22%, 23% 28%, 25% 55%, 0 62%); }
+      .p6 { --glass-x: -4px; --glass-y: 6px; --shine-angle: 102deg; clip-path: polygon(21% 28%, 49% 30%, 52% 54%, 24% 56%); }
+      .p7 { --glass-x: 6px; --glass-y: -5px; --shine-angle: 128deg; clip-path: polygon(48% 30%, 73% 32%, 69% 59%, 51% 54%); }
+      .p8 { --glass-x: -7px; --glass-y: 7px; --shine-angle: 110deg; clip-path: polygon(72% 32%, 100% 30%, 100% 63%, 68% 59%); }
+      .p9 { --glass-x: -9px; --glass-y: 5px; --shine-angle: 122deg; clip-path: polygon(0 61%, 25% 55%, 30% 82%, 0 100%); }
+      .p10 { --glass-x: 5px; --glass-y: -6px; --shine-angle: 138deg; clip-path: polygon(24% 56%, 52% 54%, 49% 83%, 29% 82%); }
+      .p11 { --glass-x: -5px; --glass-y: 7px; --shine-angle: 106deg; clip-path: polygon(51% 54%, 69% 59%, 72% 87%, 48% 83%); }
+      .p12 { --glass-x: 9px; --glass-y: -3px; --shine-angle: 130deg; clip-path: polygon(68% 59%, 100% 63%, 100% 100%, 71% 87%); }
+      .p13 { --glass-x: -3px; --glass-y: 5px; --shine-angle: 112deg; clip-path: polygon(29% 82%, 49% 83%, 72% 87%, 71% 100%, 29% 100%); }
+      .p14 { --glass-x: 6px; --glass-y: -4px; --shine-angle: 126deg; clip-path: polygon(0 84%, 29% 82%, 29% 100%, 0 100%); }
+      .p15 { --glass-x: -8px; --glass-y: 4px; --shine-angle: 104deg; clip-path: polygon(71% 87%, 100% 84%, 100% 100%, 71% 100%); }
+
+      .intro-caption {
+        position: absolute;
+        left: 44px;
+        right: 44px;
+        bottom: 130px;
+        z-index: 3;
+        opacity: 0;
+        color: #fff;
+        text-align: center;
+        font-size: 51px;
+        line-height: 1.12;
+        font-weight: 900;
+        letter-spacing: 0.01em;
+        text-shadow: 0 6px 16px rgba(0, 0, 0, 0.92);
+      }
+
+      .intro-caption .en {
+        display: block;
+        margin-top: 12px;
+        font-size: 21px;
+        line-height: 1;
+        font-weight: 900;
+        letter-spacing: 0.03em;
+        color: #fff;
+        text-shadow: 0 3px 8px rgba(0, 0, 0, 0.9);
+      }
+
+      .page {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        opacity: 0;
+        overflow: hidden;
+      }
+
+      .template-blackout {
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        background: #000;
+        opacity: 0;
+      }
+
+      .page-title {
+        position: absolute;
+        left: 28px;
+        right: 28px;
+        top: 70px;
+        color: #fff;
+        text-align: center;
+        font-size: 75px;
+        line-height: 1;
+        font-weight: 900;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+        opacity: 0;
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+        text-shadow: 0 7px 18px rgba(0, 0, 0, 0.96);
+      }
+
+      .page-author {
+        position: absolute;
+        left: 36px;
+        right: 36px;
+        top: 158px;
+        color: #fff;
+        text-align: center;
+        font-size: 30px;
+        line-height: 1;
+        font-weight: 900;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+        opacity: 0;
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+        text-shadow: 0 5px 14px rgba(0, 0, 0, 0.96);
+      }
+
+      .target .page-title {
+        top: 70px;
+        font-size: 82px;
+        letter-spacing: 0.04em;
+      }
+
+      .target .page-author {
+        top: 166px;
+        font-size: 34px;
+      }
+
+      .b1 .page-bg { background-image: url("media/pages/scroll-01.png"); }
+      .b2 .page-bg { background-image: url("media/pages/scroll-02.png"); }
+      .b3 .page-bg { background-image: url("media/pages/scroll-03.png"); }
+      .b4 .page-bg { background-image: url("media/pages/scroll-04.png"); }
+      .b5 .page-bg { background-image: url("media/pages/scroll-05.png"); }
+      .b6 .page-bg { background-image: url("media/pages/scroll-06.png"); }
+      .target .page-bg { background-image: url("media/pages/result.png"); }
+    </style>
+  </head>
+  <body>
+    <main id="root" data-composition-id="main" data-start="0" data-duration="4.25" data-width="720" data-height="960">
+      <div class="hero-full" data-layout-ignore></div>
+      <div class="black-cover" data-layout-ignore></div>
+      <div class="piece-stage" data-layout-ignore>
+        <div class="image-piece p1"></div>
+        <div class="image-piece p2"></div>
+        <div class="image-piece p3"></div>
+        <div class="image-piece p4"></div>
+        <div class="image-piece p5"></div>
+        <div class="image-piece p6"></div>
+        <div class="image-piece p7"></div>
+        <div class="image-piece p8"></div>
+        <div class="image-piece p9"></div>
+        <div class="image-piece p10"></div>
+        <div class="image-piece p11"></div>
+        <div class="image-piece p12"></div>
+        <div class="image-piece p13"></div>
+        <div class="image-piece p14"></div>
+        <div class="image-piece p15"></div>
+      </div>
+      <div class="intro-caption">
+        今天分享的是...
+        <span class="en">Today's sharing is...</span>
+      </div>
+
+      <section class="page candidate b1" data-layout-ignore>
+        <div class="page-bg"></div>
+        <div class="page-title">{{LIST_TITLE_1}}</div>
+        <div class="page-author">{{LIST_AUTHOR_1}}</div>
+      </section>
+      <section class="page candidate b2" data-layout-ignore>
+        <div class="page-bg"></div>
+        <div class="page-title">{{LIST_TITLE_2}}</div>
+        <div class="page-author">{{LIST_AUTHOR_2}}</div>
+      </section>
+      <section class="page candidate b3" data-layout-ignore>
+        <div class="page-bg"></div>
+        <div class="page-title">{{LIST_TITLE_3}}</div>
+        <div class="page-author">{{LIST_AUTHOR_3}}</div>
+      </section>
+      <section class="page candidate b4" data-layout-ignore>
+        <div class="page-bg"></div>
+        <div class="page-title">{{LIST_TITLE_4}}</div>
+        <div class="page-author">{{LIST_AUTHOR_4}}</div>
+      </section>
+      <section class="page candidate b5" data-layout-ignore>
+        <div class="page-bg"></div>
+        <div class="page-title">{{LIST_TITLE_5}}</div>
+        <div class="page-author">{{LIST_AUTHOR_5}}</div>
+      </section>
+      <section class="page candidate b6" data-layout-ignore>
+        <div class="page-bg"></div>
+        <div class="page-title">{{LIST_TITLE_6}}</div>
+        <div class="page-author">{{LIST_AUTHOR_6}}</div>
+      </section>
+      <section class="page target">
+        <div class="page-bg" data-layout-ignore></div>
+        <div class="page-title">{{TARGET_TITLE}}</div>
+        <div class="page-author">{{TARGET_AUTHOR}}</div>
+      </section>
+      <div class="template-blackout" data-layout-ignore></div>
+    </main>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      tl.fromTo(".intro-caption", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.22, ease: "power3.out" }, 0.12);
+      tl.from(".p1", { x: -140, y: -86, z: 90, rotation: -9, rotationX: -14, rotationY: 18, opacity: 0, duration: 0.76, ease: "expo.out" }, 0.1);
+      tl.from(".p2", { x: 52, y: -132, z: 120, rotation: 7, rotationX: 16, rotationY: -10, opacity: 0, duration: 0.7, ease: "power4.out" }, 0.12);
+      tl.from(".p3", { x: 126, y: -84, z: 92, rotation: -6, rotationX: -12, rotationY: 16, opacity: 0, duration: 0.74, ease: "circ.out" }, 0.14);
+      tl.from(".p4", { x: 154, y: -20, z: 88, rotation: 9, rotationX: 12, rotationY: -18, opacity: 0, duration: 0.72, ease: "expo.out" }, 0.16);
+      tl.from(".p5", { x: -124, y: 64, z: 80, rotation: 6, rotationX: -10, rotationY: -20, opacity: 0, duration: 0.7, ease: "power3.out" }, 0.18);
+      tl.from(".p6", { x: -48, y: 42, z: 72, rotation: -5, rotationX: 14, rotationY: 12, opacity: 0, duration: 0.68, ease: "back.out(1.15)" }, 0.2);
+      tl.from(".p7", { x: 56, y: 54, z: 86, rotation: 5, rotationX: -16, rotationY: 14, opacity: 0, duration: 0.66, ease: "power4.out" }, 0.22);
+      tl.from(".p8", { x: 150, y: 70, z: 96, rotation: -7, rotationX: 13, rotationY: -15, opacity: 0, duration: 0.7, ease: "circ.out" }, 0.18);
+      tl.from(".p9", { x: -156, y: 134, z: 112, rotation: -9, rotationX: -15, rotationY: 18, opacity: 0, duration: 0.54, ease: "expo.out" }, 0.12);
+      tl.from(".p10", { x: -32, y: 140, z: 88, rotation: 6, rotationX: 12, rotationY: -12, opacity: 0, duration: 0.5, ease: "power3.out" }, 0.14);
+      tl.from(".p11", { x: 68, y: 124, z: 94, rotation: -6, rotationX: -12, rotationY: 14, opacity: 0, duration: 0.5, ease: "back.out(1.1)" }, 0.16);
+      tl.from(".p12", { x: 168, y: 148, z: 116, rotation: 8, rotationX: 14, rotationY: -16, opacity: 0, duration: 0.52, ease: "power4.out" }, 0.14);
+      tl.from(".p13", { x: 22, y: 132, z: 76, rotation: -4, rotationX: -10, rotationY: 10, opacity: 0, duration: 0.48, ease: "power4.out" }, 0.14);
+      tl.from(".p14", { x: -58, y: 118, z: 82, rotation: 5, rotationX: 13, rotationY: -9, opacity: 0, duration: 0.48, ease: "power4.out" }, 0.14);
+      tl.from(".p15", { x: 64, y: 118, z: 92, rotation: -5, rotationX: -12, rotationY: 12, opacity: 0, duration: 0.48, ease: "power4.out" }, 0.14);
+      tl.to(".image-piece", { opacity: 1, duration: 0.18, ease: "sine.out" }, 0.54);
+      tl.to(".hero-full", { opacity: 1, duration: 0.1, ease: "sine.out" }, 0.72);
+      tl.to(".piece-stage", { opacity: 0, duration: 0.14, ease: "sine.in" }, 1.02);
+      tl.to(".intro-caption", { opacity: 0, y: -12, duration: 0.12, ease: "power2.in" }, 1.02);
+      tl.set(".hero-full", { opacity: 0 }, 1.07);
+
+      function expandBookText(page, start) {
+        tl.fromTo(page + " .page-title", {
+          opacity: 0,
+          scaleX: 0.62
+        }, {
+          opacity: 1,
+          scaleX: 1,
+          duration: 0.1,
+          ease: "power4.out"
+        }, start + 0.025);
+        tl.fromTo(page + " .page-author", {
+          opacity: 0,
+          scaleX: 0.72,
+          y: 10
+        }, {
+          opacity: 1,
+          scaleX: 1,
+          y: 0,
+          duration: 0.09,
+          ease: "power3.out"
+        }, start + 0.075);
+      }
+
+      var pages = [".b1", ".b2", ".b3", ".b4", ".b5", ".b6"];
+      pages.forEach(function (page, index) {
+        var start = 1.08 + index * 0.18;
+        tl.fromTo(page, { opacity: 0, scale: 1.045, y: 22 }, { opacity: 1, scale: 1, y: 0, duration: 0.07, ease: "power3.out" }, start);
+        expandBookText(page, start);
+        tl.to(page, { opacity: 0, scale: 0.988, y: -18, duration: 0.06, ease: "power3.in" }, start + 0.155);
+      });
+
+      tl.to(".template-blackout", { opacity: 1, duration: 0.04, ease: "none" }, 2.13);
+      tl.to(".template-blackout", { opacity: 0, duration: 0.08, ease: "sine.out" }, 2.34);
+      tl.fromTo(".target", { opacity: 0, scale: 1.05, y: 20 }, { opacity: 1, scale: 1, y: 0, duration: 0.24, ease: "expo.out" }, 2.38);
+      expandBookText(".target", 2.38);
+      tl.to(".target .page-bg", { scale: 1.035, duration: 1.87, ease: "sine.inOut" }, 2.38);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

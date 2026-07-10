@@ -1,0 +1,10 @@
+{
+  "name": "book-video-intro-template",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.7.33 preview",
+    "check": "npx --yes hyperframes@0.7.33 lint && npx --yes hyperframes@0.7.33 validate && npx --yes hyperframes@0.7.33 inspect --at 0.2,0.75,1.2,1.7,2.08,2.25,2.55,3.2,3.8,4.15",
+    "render": "npx --yes hyperframes@0.7.33 render"
+  }
+}
