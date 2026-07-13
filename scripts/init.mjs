@@ -15,6 +15,7 @@ const EXAMPLE_PATH = path.join(DATA_DIR, "book-pipeline.example.csv");
 const STATE_PATH = path.join(ROOT, ".book-automation-state.json");
 const ENV_PATH = path.join(ROOT, ".env");
 const WHISPER_MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
+const MIN_WHISPER_MODEL_BYTES = 100 * 1024 * 1024;
 const HYPERFRAMES_VERSION = "0.7.33";
 const WEREAD_SKILLS_URL = "https://weread.qq.com/r/weread-skills";
 
@@ -24,8 +25,10 @@ function commandAvailable(command) {
   return result.status === 0;
 }
 
-function fileExists(filePath) {
-  return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+function fileExists(filePath, minimumBytes = 0) {
+  if (!fs.existsSync(filePath)) return false;
+  const stat = fs.statSync(filePath);
+  return stat.isFile() && stat.size >= minimumBytes;
 }
 
 function parseCsvLine(line) {
@@ -90,8 +93,9 @@ function readHidden(prompt) {
 async function askYesNo(question, fallback = false) {
   if (!input.isTTY) return fallback;
   const rl = createInterface({ input, output });
-  const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
+  const answer = (await rl.question(`${question} [${fallback ? "Y/n" : "y/N"}] `)).trim().toLowerCase();
   rl.close();
+  if (!answer) return fallback;
   return answer === "y" || answer === "yes";
 }
 
@@ -125,7 +129,9 @@ async function main() {
   }
   const firstRun = !previousState || previousState.schemaVersion !== 1;
   let wereadEnabled = previousState?.weread === "enabled";
-  if (firstRun) wereadEnabled = await askYesNo("是否启用微信读书？");
+  if (firstRun) {
+    wereadEnabled = await askYesNo("是否启用微信读书 Skill？推荐启用，可获取书籍划线和书评；不启用也能继续", true);
+  }
   if (wereadEnabled && !process.env.WEREAD_API_KEY && !envFileHasKey()) {
     console.log(`请打开微信读书 Skills 官网获取 API Key：${WEREAD_SKILLS_URL}`);
     const key = await readHidden("请输入微信读书 API Key（输入内容不会显示）：");
@@ -149,7 +155,8 @@ async function main() {
     ffprobe: commandAvailable("ffprobe"),
     npx: commandAvailable("npx"),
     whisper: commandAvailable("whisper-cli"),
-    whisperModel: fileExists(WHISPER_MODEL_PATH),
+    whisperModel: fileExists(WHISPER_MODEL_PATH, MIN_WHISPER_MODEL_BYTES),
+    whisperModelBytes: fs.existsSync(WHISPER_MODEL_PATH) ? fs.statSync(WHISPER_MODEL_PATH).size : 0,
     whisperModelPath: path.relative(ROOT, WHISPER_MODEL_PATH),
     whisperModelDownload: "node scripts/download-whisper-model.mjs",
     hyperframes: `npx hyperframes@${HYPERFRAMES_VERSION}`,
