@@ -1,12 +1,6 @@
 # Book Automation Agent Guide
 
-This repository is an open-source, natural-language workflow for producing short book videos. The public tree contains reusable code, templates, and distilled methods. Personal research and media remain local.
-
-## Public Boundary
-
-`PUBLIC_FILES.txt` is the publication allowlist. Never add files outside it to the public branch.
-
-Local-only content includes `.env`, `data/book-pipeline.csv`, all episode work folders, `assets/`, `tmp/`, local skills, BGM, voiceovers, reference videos, ASR models, and render outputs. Do not commit API keys, private notes, book highlights, book reviews, social-media downloads, or user media.
+This repository is an open-source, natural-language workflow for producing short book videos. Keep reusable code, templates, owned assets, and distilled methods in Git. Keep credentials, private book data, downloaded reference videos, generated episode work, and account data local.
 
 ## First Run
 
@@ -49,16 +43,16 @@ If the user explicitly requests fully automatic production, the script approval 
 - Meaningful visuals must be AI-generated bitmaps. Do not use SVG as the main visual.
 - Do not use card UI, visible watermarks, copied frames, book-cover mockups, or literal image prompts that weaken atmosphere.
 - Keep videos under 60 seconds unless the user explicitly changes the limit.
-- BGM and voiceover are local user media with independent rights. Do not publish them.
+- Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them.
 
-## Copywriting Rules
+## Script Rules
 
-Read `docs/copywriting-guide.md` before drafting. The first line must immediately create resonance. Use short, natural lines and concrete scenes. Let the book support the viewer's emotion instead of becoming an academic summary. Avoid “你是不是”, “不是……而是……” formulas, mechanical parallelism, arrogant instruction, and CTA language. End with emotional aftertaste.
+Read `docs/book-video-playbook.md` before drafting. The first line must immediately create resonance. Use short, natural lines and concrete scenes. Let the book support the viewer's emotion instead of becoming an academic summary. Avoid “你是不是”, “不是……而是……” formulas, mechanical parallelism, arrogant instruction, and CTA language. End with emotional aftertaste.
 
 ## Dependencies And Licensing
 
-Project-owned files are Apache-2.0. HyperFrames and WeChat Reading are external Apache-2.0 dependencies. GSAP is an external runtime under Webflow's separate Standard No-Charge License. FFmpeg, fonts, image-generation services, models, and user media keep their own terms. Read `NOTICE` before redistributing.
+Project-owned files are Apache-2.0. HyperFrames and WeChat Reading are external Apache-2.0 dependencies. GSAP is an external runtime under Webflow's separate Standard No-Charge License. FFmpeg, fonts, image-generation services, models, and user media keep their own terms.
 
 ## Validation
 
-Before publication, validate the allowlist, scan reachable Git history for secrets and private media, verify no full reference transcript remains, run Node syntax checks, and run the shared template lint/validate/inspect checks. A clean clone must initialize with and without WeChat Reading.
+Before publication, scan reachable Git history for secrets and private media, verify no full reference transcript remains, run Node syntax checks, and run the shared template lint/validate/inspect checks. A clean clone must initialize with and without WeChat Reading.

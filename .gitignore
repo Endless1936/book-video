@@ -1,40 +1,34 @@
-# Private research, credentials, and generated media
+# Local credentials and generated workspace state
 .env
 .env.*
 !.env.example
 .book-automation-state.json
+
+# Local candidate data
 data/book-pipeline.csv
 data/.book-pipeline-backup-*.csv
-assets/
+
+# Do not publish downloaded reference videos or large local models
 assets/reference-videos/
+assets/models/
+
+# Local episode outputs
 episodes/*
 !episodes/README.md
-.agents/skills/
+
+# Local agent/plugin state
+.agents/
 skills-lock.json
 tmp/
 docs/superpowers/
 
-# Local episode media if a folder is explicitly force-added later
-episodes/*/images/
-episodes/*/audio/
-episodes/*/renders/
-episodes/*/frames/
-
-# Dependency and build output
+# Dependencies and build output
 node_modules/
 dist/
 build/
 .cache/
 .parcel-cache/
-tmp/
-
-# Runtime and render artifacts
 *.log
-*.tmp
-*.mp4
-*.mov
-*.wav
-*.mp3
 
 # OS/editor noise
 .DS_Store
