@@ -1,4 +1,4 @@
-# Bookloom（书境）Agent Guide
+# Book Video Agent Guide
 
 This repository is an open-source, natural-language workflow for producing short book videos. Keep reusable code, templates, owned assets, and distilled methods in Git. Keep credentials, private book data, downloaded reference videos, generated episode work, and account data local.
 

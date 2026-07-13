@@ -1,4 +1,4 @@
-# Bookloom（书境）视频生产手册
+# Book Video 生产手册
 
 这是唯一有效的图书带货视频生产 SOP。共享模板位于 `templates/shared-video-template/`；每期只替换书籍信息、文案、AI 图片、正文口播和 BGM。
 
