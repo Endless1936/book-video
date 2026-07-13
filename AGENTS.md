@@ -1,4 +1,4 @@
-# Book Automation Agent Guide
+# Bookloom（书境）Agent Guide
 
 This repository is an open-source, natural-language workflow for producing short book videos. Keep reusable code, templates, owned assets, and distilled methods in Git. Keep credentials, private book data, downloaded reference videos, generated episode work, and account data local.
 
@@ -44,7 +44,7 @@ If the user explicitly requests fully automatic production, the script approval 
 - Meaningful visuals must be AI-generated bitmaps. Do not use SVG as the main visual.
 - Do not use card UI, visible watermarks, copied frames, book-cover mockups, or literal image prompts that weaken atmosphere.
 - Keep videos under 60 seconds unless the user explicitly changes the limit.
-- Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them.
+- Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them. The four files currently available under `assets/bgm/` are local default candidates; do not track them publicly until their third-party rights are confirmed.
 
 ## Script Rules
 
@@ -52,7 +52,7 @@ Read `docs/book-video-playbook.md` before drafting. The first line must immediat
 
 ## Dependencies And Licensing
 
-Project-owned files are Apache-2.0. HyperFrames and WeChat Reading are external Apache-2.0 dependencies. GSAP is an external runtime under Webflow's separate Standard No-Charge License. FFmpeg, fonts, image-generation services, models, and user media keep their own terms.
+Project-owned code, documentation, and reusable templates are Apache-2.0, copyright prototech（endless）. HyperFrames and WeChat Reading are external dependencies. GSAP is an external runtime under Webflow's separate Standard No-Charge License. FFmpeg, fonts, image-generation services, models, BGM, and other user media keep their own terms.
 
 ## Validation
 
