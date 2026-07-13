@@ -83,62 +83,38 @@ function getDisplayTitle(brief) {
   return brief.display_title || brief.displayTitle || brief.title;
 }
 
-function normalizeBookTitle(title) {
-  return String(title || "")
-    .normalize("NFKC")
-    .replace(/[《》]/gu, "")
-    .replace(/\s+/gu, "")
-    .trim()
-    .toLowerCase();
+function getIntroBooks() {
+  if (!fs.existsSync(defaultIntroBooksPath)) {
+    throw new Error(`Missing fixed intro book list: ${defaultIntroBooksPath}`);
+  }
+  const books = JSON.parse(fs.readFileSync(defaultIntroBooksPath, "utf8"));
+  if (!Array.isArray(books) || books.length !== 6 || books.some((book) => !book?.title || !book?.author)) {
+    throw new Error("Fixed intro book list must contain exactly six real books with authors");
+  }
+  return books.map((book) => ({ title: String(book.title).trim(), author: String(book.author).trim() }));
 }
 
-function readCandidateBooks() {
-  const candidatePaths = [
-    path.join(ROOT, "data", "book-pipeline.csv"),
-    path.join(ROOT, "data", "book-pipeline.example.csv"),
-  ];
-  for (const candidatePath of candidatePaths) {
-    if (!fs.existsSync(candidatePath)) continue;
-    const rows = readCsv(candidatePath);
-    const books = rows
-      .map((row) => ({ title: row.display_title || row.title, author: row.author }))
-      .filter((book) => book.title && book.author);
-    if (books.length) return books;
+function wrapCaptionText(text, maxCharsPerLine = 11) {
+  const chars = Array.from(String(text || "").trim());
+  const lines = [];
+  let current = "";
+  for (const char of chars) {
+    current += char;
+    const punctuationBreak = /[，。！？；：,.!?;:]/u.test(char) && current.length >= maxCharsPerLine - 2;
+    const hardBreak = current.length >= maxCharsPerLine + 2;
+    if (punctuationBreak || hardBreak) {
+      lines.push(current);
+      current = "";
+    }
   }
-  return [];
-}
-
-function getIntroBooks(brief) {
-  const configured = Array.isArray(brief.introBooks)
-    ? brief.introBooks.map((book) => (Array.isArray(book) ? { title: book[0], author: book[1] } : book))
-    : [];
-  const defaults = fs.existsSync(defaultIntroBooksPath)
-    ? JSON.parse(fs.readFileSync(defaultIntroBooksPath, "utf8"))
-    : [];
-  const targetTitle = normalizeBookTitle(getDisplayTitle(brief));
-  const candidates = [...configured, ...readCandidateBooks(), ...defaults];
-  const result = [];
-  const seen = new Set();
-  for (const candidate of candidates) {
-    const title = String(candidate?.title || candidate?.display_title || candidate?.displayTitle || "").trim();
-    const author = String(candidate?.author || "").trim();
-    const normalizedTitle = normalizeBookTitle(title);
-    const key = `${normalizedTitle}|${author}`;
-    if (!normalizedTitle || !author || normalizedTitle === targetTitle || seen.has(key)) continue;
-    seen.add(key);
-    result.push({ title, author });
-    if (result.length === 6) return result;
-  }
-  throw new Error(
-    `Intro book list requires six real books excluding ${getDisplayTitle(brief)}. `
-    + "Add brief.introBooks or populate data/book-pipeline.csv.",
-  );
+  if (current) lines.push(current);
+  return lines.map((line) => esc(line)).join("<br />");
 }
 
 function createIntro(brief) {
   const displayTitle = getDisplayTitle(brief);
   const titleLayout = getTitleLayout(displayTitle);
-  const introBooks = getIntroBooks(brief);
+  const introBooks = getIntroBooks();
   fs.mkdirSync(introDir, { recursive: true });
   fs.cpSync(
     path.join(ROOT, "templates", "shared-video-template", "intro", "media"),
@@ -209,7 +185,7 @@ function createBody(brief, rows, audioTimings) {
   const captionHtml = rows
     .map((row) => {
       const small = row.text.length >= 9 ? " small" : "";
-      return `      <div class="caption c${row.order}${small}"><span>${esc(row.text)}</span></div>`;
+      return `      <div class="caption c${row.order}${small}"><span>${wrapCaptionText(row.text)}</span></div>`;
     })
     .join("\n");
 

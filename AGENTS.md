@@ -40,7 +40,7 @@ Use `display_title` for folder names, visible labels, and scripts. Keep the exac
 5. Replace old episode media only after the new output passes technical checks. Keep one active script, prompt set, image set, audio set, and render.
 6. After a final render or preview succeeds, embed the actual local media in the same reply with an absolute-path Markdown media reference, for example `![最终视频](/absolute/path/to/final.mp4)`. Never provide only a filesystem path and ask the user to locate or open the file. Include the path and brief technical metadata below the preview as supplementary text.
 
-The intro book list must contain six real, verified books different from the target book. `brief.introBooks` takes priority; otherwise use the local candidate pool or the tracked default list. Placeholder labels such as `书名一` or `作者一` are forbidden, and rendering must stop when six real entries cannot be resolved.
+The intro book list is a fixed six-book template list stored in `templates/shared-video-template/intro/default-book-list.json`. It is independent of `book-pipeline.example.csv`, and the target book may appear in the rolling list before the final reveal. Placeholder labels such as `书名一` or `作者一` are forbidden.
 
 If the user explicitly requests fully automatic production, the script approval gate may be skipped for that episode only.
 
@@ -51,6 +51,7 @@ If the user explicitly requests fully automatic production, the script approval 
 - Meaningful visuals must be AI-generated bitmaps. Do not use SVG as the main visual.
 - Do not use card UI, visible watermarks, copied frames, book-cover mockups, or literal image prompts that weaken atmosphere.
 - Body subtitles must be generated from `script.csv` plus `body-timings.json`; incomplete caption timing is a render-blocking error. Long Chinese lines must wrap within the 720px frame and remain visible.
+- Keep each script row as one complete spoken unit for ASR alignment. The renderer automatically wraps long rows to roughly 11 Chinese characters per visual line; do not split or rewrite the source text only to force a visual line break.
 - Keep videos under 60 seconds unless the user explicitly changes the limit.
 - Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them. The four default BGM files under `assets/bgm/` are tracked with project-maintainer redistribution authorization recorded in `templates/shared-video-template/ASSET_PROVENANCE.csv`; do not add new media without the same confirmation.
 

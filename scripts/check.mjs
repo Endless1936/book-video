@@ -47,8 +47,12 @@ for (const file of scriptFiles) {
 
 const defaultIntroBooksPath = path.join(ROOT, "templates", "shared-video-template", "intro", "default-book-list.json");
 const defaultIntroBooks = JSON.parse(fs.readFileSync(defaultIntroBooksPath, "utf8"));
-if (!Array.isArray(defaultIntroBooks) || defaultIntroBooks.length < 6) {
-  throw new Error("Default intro book list must contain at least six books");
+if (
+  !Array.isArray(defaultIntroBooks)
+  || defaultIntroBooks.length !== 6
+  || defaultIntroBooks.some((book) => !book?.title || !book?.author)
+) {
+  throw new Error("Default intro book list must contain exactly six books with authors");
 }
 
 const test = run(process.execPath, ["scripts/tests/test-title-normalization.mjs"]);
