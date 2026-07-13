@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
+import { validateBodyScript } from "./lib/script-policy.mjs";
 
 const ROOT = process.cwd();
 const [episodeName, requestedVersion] = process.argv.slice(2);
@@ -298,6 +299,8 @@ if (!rows.length) {
   console.error(`No script rows found for version ${version}`);
   process.exit(1);
 }
+const scriptValidation = validateBodyScript(rows);
+if (scriptValidation.errors.length) throw new Error(scriptValidation.errors.join("；"));
 
 createIntro(brief);
 createBody(brief, rows, readOptionalBodyTimings(version));

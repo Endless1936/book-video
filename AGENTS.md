@@ -34,6 +34,7 @@ Use `display_title` for folder names, visible labels, and scripts. Keep the exac
 ## Production Gates
 
 1. After book selection, create one active script and send it for approval. The response must include the complete copy-ready voiceover in one Markdown fenced code block. The first line must be the display title in the form `《书名》`, followed immediately by every line to be read aloud. Do not put CSV headers, order numbers, author labels, timing data, or explanations inside the block. A `script.csv` attachment or file path is supplementary and must never be the only presentation; the whole block must be directly copyable into Jianying for audio generation.
+The copy-ready script should target 18-20 total lines including the title. Hard limits are 22 total lines including the title, at most 21 body rows in `script.csv`, and about 220 Chinese characters in the body. The Agent must validate the script before requesting approval; a script over either hard limit must be shortened rather than passed into audio or rendering.
 2. Only after script approval, generate prompts and 2-3 AI atmosphere images plus the result bridge.
 3. When body voiceover is supplied, process it with the `story` preset, use ASR only for timing, and keep `script.csv` as subtitle truth.
 4. Mix the shared intro, gear SFX, and a user-selected or randomly chosen BGM. Render the final video only after the relevant media is present.

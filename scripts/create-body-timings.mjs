@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { buildCaptionTimings, buildSpeechSegments, coalesceSpeechSegments, parseSilenceEvents } from "./lib/body-timings.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
+import { validateBodyScript } from "./lib/script-policy.mjs";
 
 const ROOT = process.cwd();
 const MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
@@ -86,6 +87,8 @@ if (!fs.existsSync(MODEL_PATH)) throw new Error(`Missing Whisper model: ${MODEL_
 
 const rows = readScriptRows(scriptPath, scriptVersion);
 if (!rows.length) throw new Error(`No script rows found for version ${scriptVersion}`);
+const scriptValidation = validateBodyScript(rows);
+if (scriptValidation.errors.length) throw new Error(scriptValidation.errors.join("；"));
 
 fs.mkdirSync(asrDir, { recursive: true });
 run("whisper-cli", ["-ng", "-m", MODEL_PATH, "-l", "zh", "-oj", "-otxt", "-of", asrBase, voicePath], { stdio: "inherit" });
