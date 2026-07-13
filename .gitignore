@@ -13,6 +13,9 @@ data/.book-pipeline-backup-*.csv
 assets/reference-videos/
 assets/models/
 
+# Default music remains local until redistribution rights are confirmed
+assets/bgm/*.mp3
+
 # Local episode outputs
 episodes/*
 !episodes/README.md
