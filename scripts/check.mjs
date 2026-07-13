@@ -11,6 +11,7 @@ const requiredCommands = ["ffmpeg", "ffprobe", "npx"];
 const scriptFiles = [
   "scripts/init.mjs",
   "scripts/download-whisper-model.mjs",
+  "scripts/record-book-candidates.mjs",
   "scripts/create-body-timings.mjs",
   "scripts/create-episode-preview.mjs",
   "scripts/process-voiceover.mjs",

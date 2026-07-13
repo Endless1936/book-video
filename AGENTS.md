@@ -23,7 +23,8 @@ Initialization must be idempotent. It must not reinstall a verified skill, overw
 - If the user names a book, use it after verifying title and author.
 - If `data/book-pipeline.csv` is missing, header-only, or has no usable candidates, ask one question covering preferred genre, emotional theme, or audience.
 - With a preference, search according to it. Without a preference, search literary/philosophical books with strong emotional resonance for young adults.
-- Recommend five candidates and mark one top recommendation. Wait for book selection before drafting.
+- After every candidate search, write the complete result set to the local ignored `data/book-pipeline.csv` before recommending. Use `node scripts/record-book-candidates.mjs <candidates.json>` so fields are normalized and duplicate results are merged; never only present search results in chat.
+- Recommend five candidates from the recorded rows and mark one top recommendation. Wait for book selection before drafting.
 - Use WeChat Reading highlights, reviews, and book metadata when available. Public sources are supplemental.
 
 ## Book Metadata

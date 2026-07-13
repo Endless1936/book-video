@@ -1,1 +1,11 @@
 status,priority,display_title,source_title,author,source_channel,source_book_id,category,rating,rating_count,reading_count,highlight_top_count,reviews_count,resonance_score,emotion_theme,selection_reason,video_project,notes
+candidate,normal,我与地坛,我与地坛,史铁生,starter_example,,文学,,,,,,high,亲情;命运;成长,具体生活场景强，适合情绪共鸣类叙事,,
+candidate,normal,活着,活着,余华,starter_example,,文学,,,,,,high,亲情;苦难;生命,情绪辨识度高，适合平铺直叙的故事文案,,
+candidate,normal,百年孤独,百年孤独,加西亚·马尔克斯,starter_example,,文学,,,,,,medium,家族;孤独;时间,意象丰富，适合氛围感画面和文学向表达,,
+candidate,normal,悉达多,悉达多,赫尔曼·黑塞,starter_example,,文学;哲学,,,,,,high,自我寻找;成长;孤独,适合年轻人自我探索和精神成长主题,,
+candidate,normal,局外人,局外人,阿尔贝·加缪,starter_example,,文学;哲学,,,,,,medium,疏离;荒诞;孤独,主题鲜明，适合做克制而有余味的共鸣文案,,
+candidate,normal,追风筝的人,追风筝的人,卡勒德·胡赛尼,starter_example,,文学,,,,,,high,友情;亏欠;救赎,人物关系和情感转折容易形成观看停留,,
+candidate,normal,月亮与六便士,月亮与六便士,毛姆,starter_example,,文学,,,,,,medium,选择;理想;代价,适合讨论现实压力与人生选择,,
+candidate,normal,人间草木,人间草木,汪曾祺,starter_example,,文学,,,,,,medium,日常;温柔;生活,日常细节丰富，适合温暖治愈的氛围视频,,
+candidate,normal,瓦尔登湖,瓦尔登湖,亨利·戴维·梭罗,starter_example,,文学;哲学,,,,,,medium,自然;独处;简化生活,适合年轻人压力与内耗主题,,
+candidate,normal,非暴力沟通,非暴力沟通,马歇尔·卢森堡,starter_example,,心理;沟通,,,,,,high,关系;误解;表达,现实问题明确，适合关系冲突和沟通主题,,
