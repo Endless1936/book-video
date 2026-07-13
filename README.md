@@ -2,7 +2,7 @@
 
 这是一个通过自然语言制作图书带货短视频的开源工作流。它把选书、文案、氛围图、旁白对齐和成片制作组织成一套可复用的流程。
 
-Copyright (c) 2026 prototech（endless）
+Copyright (c) 2026 prototech, endless, and 未济.
 
 ## 如何使用
 

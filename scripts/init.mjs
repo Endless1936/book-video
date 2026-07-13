@@ -18,7 +18,8 @@ const WHISPER_MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-
 const HYPERFRAMES_VERSION = "0.7.33";
 
 function commandAvailable(command) {
-  const result = spawnSync(command, ["--version"], { stdio: "ignore", shell: false });
+  const args = command === "ffmpeg" ? ["-hide_banner", "-h"] : command === "ffprobe" ? ["-version"] : ["--version"];
+  const result = spawnSync(command, args, { stdio: "ignore", shell: false });
   return result.status === 0;
 }
 
@@ -117,8 +118,14 @@ function migratePipeline() {
 
 async function main() {
   const nodeMajor = Number(process.versions.node.split(".")[0]);
-  const wereadEnabled = await askYesNo("是否启用微信读书？");
-  if (wereadEnabled && !process.env.WEREAD_API_KEY) {
+  let previousState = null;
+  if (fs.existsSync(STATE_PATH)) {
+    try { previousState = JSON.parse(fs.readFileSync(STATE_PATH, "utf8")); } catch { previousState = null; }
+  }
+  const firstRun = !previousState || previousState.schemaVersion !== 1;
+  let wereadEnabled = previousState?.weread === "enabled";
+  if (firstRun) wereadEnabled = await askYesNo("是否启用微信读书？");
+  if (wereadEnabled && !process.env.WEREAD_API_KEY && !envFileHasKey()) {
     const key = await readHidden("请输入微信读书 API Key（输入内容不会显示）：");
     if (key) writeEnvKey(key);
     else if (input.isTTY) console.log("未写入 API Key，将使用公开资料模式。");
@@ -127,7 +134,8 @@ async function main() {
   const pipelineStatus = migratePipeline();
   const state = {
     schemaVersion: 1,
-    initializedAt: new Date().toISOString(),
+    initializedAt: previousState?.initializedAt || new Date().toISOString(),
+    lastCheckedAt: new Date().toISOString(),
     weread: wereadEnabled && (process.env.WEREAD_API_KEY || envFileHasKey()) ? "enabled" : "disabled",
     imageCapability: process.env.CODEX_IMAGE_CAPABILITY || "agent-managed",
   };
@@ -136,6 +144,7 @@ async function main() {
   const checks = {
     node: nodeMajor >= 22,
     ffmpeg: commandAvailable("ffmpeg"),
+    ffprobe: commandAvailable("ffprobe"),
     npx: commandAvailable("npx"),
     whisper: commandAvailable("whisper-cli"),
     whisperModel: fileExists(WHISPER_MODEL_PATH),
@@ -145,7 +154,7 @@ async function main() {
     platform: `${process.platform}-${os.arch()}`,
   };
   console.log(JSON.stringify({ pipeline: pipelineStatus, checks }, null, 2));
-  if (!checks.node || !checks.ffmpeg || !checks.npx) process.exitCode = 1;
+  if (!checks.node || !checks.ffmpeg || !checks.ffprobe || !checks.npx) process.exitCode = 1;
 }
 
 main().catch((error) => { console.error(error.message); process.exitCode = 1; });

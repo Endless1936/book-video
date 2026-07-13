@@ -13,6 +13,8 @@ For the first user message in this repository, including a simple greeting such 
 5. If WeChat Reading is enabled, collect `WEREAD_API_KEY` only through hidden TTY input or a local `.env` file with mode `0600`. Never log the key and never accept it as a command argument.
 6. If WeChat Reading is declined or unavailable, continue with public research or a user-provided title.
 
+After a body voiceover is supplied, run `node scripts/create-body-timings.mjs "<book>" <script-version>`. It writes Whisper output under the local episode audio folder and creates `body-timings.json` from speech pauses. The default skips the spoken title/author segment; use `--skip-leading 0` when the audio starts directly with the first script line.
+
 Initialization must be idempotent. It must not reinstall a verified skill, overwrite a valid key, reset user choices, or duplicate CSV columns.
 
 ## Book Selection
@@ -52,8 +54,8 @@ Read `docs/book-video-playbook.md` before drafting. The first line must immediat
 
 ## Dependencies And Licensing
 
-Project-owned code, documentation, and reusable templates are Apache-2.0, copyright prototech（endless）. HyperFrames and WeChat Reading are external dependencies. GSAP is an external runtime under Webflow's separate Standard No-Charge License. FFmpeg, fonts, image-generation services, models, BGM, and other user media keep their own terms.
+Project-owned code, documentation, and reusable templates are Apache-2.0. Copyright (c) 2026 prototech, endless, and 未济. HyperFrames and WeChat Reading are external dependencies. GSAP is an external runtime under Webflow's separate Standard No-Charge License. FFmpeg, fonts, image-generation services, models, BGM, and other user media keep their own terms.
 
 ## Validation
 
-Before publication, scan reachable Git history for secrets and private media, verify no full reference transcript remains, run Node syntax checks, and run the shared template lint/validate/inspect checks. A clean clone must initialize with and without WeChat Reading.
+Before publication, run `npm run check`, scan reachable Git history for secrets and private media, verify no full reference transcript remains, and confirm a clean clone initializes with and without WeChat Reading.

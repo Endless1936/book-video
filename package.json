@@ -1,0 +1,8 @@
+{
+  "name": "book-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check.mjs"
+  }
+}
