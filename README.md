@@ -35,6 +35,6 @@ Copyright (c) 2026 prototech, endless, and 未济.
 
 本项目的代码、文档和可复用模板采用 [Apache-2.0](LICENSE) 发布，版权方为 prototech（组织名），endless（网名）。Apache-2.0 不代表它自动覆盖第三方工具、字体、模型、图片生成服务或媒体素材。
 
-本地工作流预留了四首默认 BGM，位于 `assets/bgm/`：`城南花已开.mp3`、`红色高跟鞋.mp3`、`起风了.mp3`、`如愿.mp3`。这些音频的著作权和再发布条件以各自权利人的授权为准，不因被用于本地工作流就获得商业使用权；只有确认拥有再发布权后，才应将它们加入公开发行包。
+仓库包含四首默认 BGM，位于 `assets/bgm/`：`城南花已开.mp3`、`红色高跟鞋.mp3`、`起风了.mp3`、`如愿.mp3`。项目维护者已确认这些文件可以随本项目公开再发布；它们的来源和授权状态记录在 `templates/shared-video-template/ASSET_PROVENANCE.csv` 中。将音频用于其他商业场景时，仍需遵守对应授权范围。
 
 更详细的内部生产规则见 `AGENTS.md` 和 `docs/book-video-playbook.md`。

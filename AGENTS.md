@@ -46,7 +46,7 @@ If the user explicitly requests fully automatic production, the script approval 
 - Meaningful visuals must be AI-generated bitmaps. Do not use SVG as the main visual.
 - Do not use card UI, visible watermarks, copied frames, book-cover mockups, or literal image prompts that weaken atmosphere.
 - Keep videos under 60 seconds unless the user explicitly changes the limit.
-- Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them. The four files currently available under `assets/bgm/` are local default candidates; do not track them publicly until their third-party rights are confirmed.
+- Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them. The four default BGM files under `assets/bgm/` are tracked with project-maintainer redistribution authorization recorded in `templates/shared-video-template/ASSET_PROVENANCE.csv`; do not add new media without the same confirmation.
 
 ## Script Rules
 
