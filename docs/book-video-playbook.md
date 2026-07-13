@@ -52,18 +52,18 @@ episodes/<book>/
 
 `script.csv` 使用 `display_title` 关联的书籍和唯一活动版本；它是字幕文本真源。`prompts.csv` 记录当前图片提示词、生成工具、来源和审核状态。
 
-## Audio Contract
+## 音频约定
 
-- Shared intro voice and gear SFX are local template media.
-- Body voiceover starts with the formal book introduction.
-- Process voiceover with the `story` preset.
-- Store ASR timing with a matching `scriptVersion`; never use raw ASR text as final subtitles.
-- If BGM is not specified, choose one available track at random. Commit music, SFX, and voiceover files only when redistribution rights are clear.
+- 共享片头口播和齿轮音效属于模板媒体。
+- 正文口播从正式介绍书籍的位置开始。
+- 口播统一使用 `story` 预设处理。
+- ASR 时间轴必须匹配对应的 `scriptVersion`；字幕文本始终以 `script.csv` 为准，不能直接使用 ASR 原文。
+- 如果用户没有指定 BGM，就从可用曲目中随机选择一首。只有在确认拥有再发布权时，才可以把音乐、音效和口播文件提交进仓库。
 
-## Replacement Policy
+## 替换策略
 
-Generate replacements under `tmp/`, validate them, then overwrite the active episode files and remove superseded media. Git preserves tracked text history; media history is intentionally not retained. A/B copies are temporary only and require explicit user approval.
+新方案先在 `tmp/` 下生成并验证。验证通过后，再覆盖当前 episode 的活动文件，并删除被替换的旧媒体。Git 只保留已追踪文本的历史；媒体历史默认不保留。A/B 对比文件只能临时存在，并且需要用户明确同意。
 
-## Copyright Boundary
+## 版权边界
 
-Do not copy reference-video transcripts, long book excerpts, book reviews, popular-highlight dumps, downloaded social-media videos, user voice recordings, music, or account data into tracked files. Keep only independently worded production guidance in this playbook.
+不要把参考视频转录、长篇图书摘录、书评全文、热门划线汇总、下载的社交媒体视频、用户录音、音乐或账号数据写入 Git 追踪文件。本 SOP 只保留独立表述的视频制作方法。
