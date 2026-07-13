@@ -20,7 +20,7 @@ const INTRO_SCROLL_SFX_START_SECONDS = 1.08;
 const INTRO_SCROLL_SFX_END_SECONDS = 2.38;
 const INTRO_SCROLL_SFX_FADE_OUT_SECONDS = 0.2;
 const INTRO_SCROLL_SFX_VOLUME = 1.4;
-const INTRO_SCROLL_SFX_PATH = path.join(ROOT, "assets", "sfx", "gear-scroll-template.mp3");
+const INTRO_SCROLL_SFX_PATH = path.join(ROOT, "assets", "sfx", "gear-scroll.mp3");
 
 const [episodeName, scriptVersion = "A_reference_like", bgmInput] = process.argv.slice(2);
 
@@ -61,7 +61,7 @@ const introVideo = path.join(introDir, "renders", "intro.mp4");
 const bodyVideo = path.join(bodyDir, "renders", "body.mp4");
 const introVoice = path.join(ROOT, "assets", "template-audio", "intro-voiceover.mp3");
 const bodyVoice = path.join(audioDir, "body-voiceover.mp3");
-const introStoryVoice = path.join(ROOT, "assets", "template-audio", "intro-voiceover-story.mp3");
+const introStoryVoice = path.join(previewDir, "audio", "intro-voiceover-story.mp3");
 const bodyStoryVoice = path.join(audioDir, "body-voiceover-story.mp3");
 const bgmMixSuffix =
   FINAL_BGM_GAIN_DB === 0
