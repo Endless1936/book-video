@@ -128,6 +128,15 @@ function readBodyDuration() {
   if (timings.scriptVersion && timings.scriptVersion !== scriptVersion) {
     throw new Error(`body-timings.json is for ${timings.scriptVersion}, not ${scriptVersion}`);
   }
+  const scriptLines = fs.readFileSync(path.join(episodeDir, "script.csv"), "utf8").trim().split(/\r?\n/u);
+  const expectedCaptionCount = scriptLines.slice(1).filter((line) => line.split(",", 1)[0] === scriptVersion).length;
+  const actualCaptionCount = Array.isArray(timings.captions) ? timings.captions.length : 0;
+  if (expectedCaptionCount === 0 || actualCaptionCount !== expectedCaptionCount) {
+    throw new Error(
+      `Caption timing is incomplete for ${scriptVersion}: expected ${expectedCaptionCount}, got ${actualCaptionCount}. `
+      + "Run create-body-timings.mjs again before rendering.",
+    );
+  }
   return Number(timings.duration || 0);
 }
 

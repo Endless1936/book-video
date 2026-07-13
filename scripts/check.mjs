@@ -45,6 +45,12 @@ for (const file of scriptFiles) {
   if (result.status !== 0) throw new Error(`Syntax check failed: ${file}`);
 }
 
+const defaultIntroBooksPath = path.join(ROOT, "templates", "shared-video-template", "intro", "default-book-list.json");
+const defaultIntroBooks = JSON.parse(fs.readFileSync(defaultIntroBooksPath, "utf8"));
+if (!Array.isArray(defaultIntroBooks) || defaultIntroBooks.length < 6) {
+  throw new Error("Default intro book list must contain at least six books");
+}
+
 const test = run(process.execPath, ["scripts/tests/test-title-normalization.mjs"]);
 if (test.status !== 0) throw new Error(test.stderr || "Title normalization test failed");
 const timingTest = run(process.execPath, ["scripts/tests/test-body-timings.mjs"]);

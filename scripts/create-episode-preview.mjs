@@ -20,6 +20,7 @@ const workSlug = slugifyEpisodeName(episodeName);
 const workDir = path.join(ROOT, "tmp", `preview-${workSlug}`);
 const introDir = path.join(workDir, "intro");
 const bodyDir = path.join(workDir, "body");
+const defaultIntroBooksPath = path.join(ROOT, "templates", "shared-video-template", "intro", "default-book-list.json");
 
 function readCsv(filePath) {
   const text = fs.readFileSync(filePath, "utf8").trim();
@@ -82,23 +83,56 @@ function getDisplayTitle(brief) {
   return brief.display_title || brief.displayTitle || brief.title;
 }
 
-function getIntroBooks(brief) {
-  const fallback = [
-    ["书名一", "作者一"],
-    ["书名二", "作者二"],
-    ["书名三", "作者三"],
-    ["书名四", "作者四"],
-    ["书名五", "作者五"],
-    ["书名六", "作者六"],
+function normalizeBookTitle(title) {
+  return String(title || "")
+    .normalize("NFKC")
+    .replace(/[《》]/gu, "")
+    .replace(/\s+/gu, "")
+    .trim()
+    .toLowerCase();
+}
+
+function readCandidateBooks() {
+  const candidatePaths = [
+    path.join(ROOT, "data", "book-pipeline.csv"),
+    path.join(ROOT, "data", "book-pipeline.example.csv"),
   ];
-  const books = Array.isArray(brief.introBooks) ? brief.introBooks : fallback;
-  return Array.from({ length: 6 }, (_, index) => {
-    const book = books[index] || fallback[index];
-    return {
-      title: book.title || `书名${index + 1}`,
-      author: book.author || `作者${index + 1}`,
-    };
-  });
+  for (const candidatePath of candidatePaths) {
+    if (!fs.existsSync(candidatePath)) continue;
+    const rows = readCsv(candidatePath);
+    const books = rows
+      .map((row) => ({ title: row.display_title || row.title, author: row.author }))
+      .filter((book) => book.title && book.author);
+    if (books.length) return books;
+  }
+  return [];
+}
+
+function getIntroBooks(brief) {
+  const configured = Array.isArray(brief.introBooks)
+    ? brief.introBooks.map((book) => (Array.isArray(book) ? { title: book[0], author: book[1] } : book))
+    : [];
+  const defaults = fs.existsSync(defaultIntroBooksPath)
+    ? JSON.parse(fs.readFileSync(defaultIntroBooksPath, "utf8"))
+    : [];
+  const targetTitle = normalizeBookTitle(getDisplayTitle(brief));
+  const candidates = [...configured, ...readCandidateBooks(), ...defaults];
+  const result = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const title = String(candidate?.title || candidate?.display_title || candidate?.displayTitle || "").trim();
+    const author = String(candidate?.author || "").trim();
+    const normalizedTitle = normalizeBookTitle(title);
+    const key = `${normalizedTitle}|${author}`;
+    if (!normalizedTitle || !author || normalizedTitle === targetTitle || seen.has(key)) continue;
+    seen.add(key);
+    result.push({ title, author });
+    if (result.length === 6) return result;
+  }
+  throw new Error(
+    `Intro book list requires six real books excluding ${getDisplayTitle(brief)}. `
+    + "Add brief.introBooks or populate data/book-pipeline.csv.",
+  );
 }
 
 function createIntro(brief) {
@@ -209,7 +243,7 @@ function createBody(brief, rows, audioTimings) {
       .book-title { position: absolute; left: 28px; right: 28px; top: 70px; display: block; font-size: ${titleLayout.fontSize}px; line-height: 1; font-weight: 900; letter-spacing: 0.04em; white-space: nowrap; text-shadow: 0 7px 18px rgba(0, 0, 0, 0.96); }
       .book-author { position: absolute; left: 36px; right: 36px; top: ${titleLayout.authorTop}px; display: block; font-size: 34px; line-height: 1; font-weight: 900; letter-spacing: 0.06em; white-space: nowrap; text-shadow: 0 5px 14px rgba(0, 0, 0, 0.96); }
       .caption { position: absolute; left: 34px; right: 34px; bottom: 126px; z-index: 9; color: #fff; text-align: center; font-size: 56px; line-height: 1.16; font-weight: 900; letter-spacing: 0; opacity: 0; transform-origin: 50% 55%; will-change: transform, opacity; text-shadow: 0 7px 18px rgba(0, 0, 0, 0.96); }
-      .caption span { display: block; white-space: nowrap; }
+      .caption span { display: block; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
       .caption.small { font-size: 50px; }
     </style>
   </head>
