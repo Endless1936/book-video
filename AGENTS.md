@@ -25,7 +25,7 @@ Initialization must be idempotent. It must not reinstall a verified skill, overw
 - With a preference, search according to it. Without a preference, search literary/philosophical books with strong emotional resonance for young adults.
 - After every candidate search, write the complete result set to the local ignored `data/book-pipeline.csv` before recommending. Use `node scripts/record-book-candidates.mjs <candidates.json>` so fields are normalized and duplicate results are merged; never only present search results in chat.
 - Recommend five candidates from the recorded rows and mark one top recommendation. Wait for book selection before drafting.
-- Use WeChat Reading highlights, reviews, and book metadata when available. Public sources are supplemental.
+- When the WeChat Reading Skill is installed and configured, use it flexibly as the preferred research source for book metadata, popular highlights, and public reviews during book discovery and script preparation. Treat its results as research signals, not copy to reproduce. Public sources and user-provided material remain valid supplements or fallbacks when the Skill has no useful result.
 
 ## Book Metadata
 
@@ -59,6 +59,8 @@ If the user explicitly requests fully automatic production, the script approval 
 ## Script Rules
 
 Read `docs/book-video-playbook.md` before drafting. The first line must immediately create resonance. Use short, natural lines and concrete scenes. Let the book support the viewer's emotion instead of becoming an academic summary. Avoid “你是不是”, “不是……而是……” formulas, mechanical parallelism, arrogant instruction, and CTA language. End with emotional aftertaste.
+
+When WeChat Reading is available, consult its book details, popular highlights, and public reviews before drafting so the script has concrete material and a reliable emotional entry point. Use the Skill to inform the writing, not to copy long excerpts or replace independent judgment.
 
 ## Dependencies And Licensing
 
