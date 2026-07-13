@@ -51,7 +51,7 @@ If the user explicitly requests fully automatic production, the script approval 
 - Meaningful visuals must be AI-generated bitmaps. Do not use SVG as the main visual.
 - Do not use card UI, visible watermarks, copied frames, book-cover mockups, or literal image prompts that weaken atmosphere.
 - Body subtitles must be generated from `script.csv` plus `body-timings.json`; incomplete caption timing is a render-blocking error. Long Chinese lines must wrap within the 720px frame and remain visible.
-- Keep each script row as one complete spoken unit for ASR alignment. The renderer automatically wraps long rows to roughly 11 Chinese characters per visual line; do not split or rewrite the source text only to force a visual line break.
+- Keep each script row as one complete spoken unit for ASR alignment. The renderer first breaks at commas, periods, question marks, and similar punctuation; each clause stays within roughly 12 Chinese characters. If one clause is longer, it is balanced across multiple visual lines without changing the source text.
 - Keep videos under 60 seconds unless the user explicitly changes the limit.
 - Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them. The four default BGM files under `assets/bgm/` are tracked with project-maintainer redistribution authorization recorded in `templates/shared-video-template/ASSET_PROVENANCE.csv`; do not add new media without the same confirmation.
 

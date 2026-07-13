@@ -94,20 +94,27 @@ function getIntroBooks() {
   return books.map((book) => ({ title: String(book.title).trim(), author: String(book.author).trim() }));
 }
 
-function wrapCaptionText(text, maxCharsPerLine = 11) {
-  const chars = Array.from(String(text || "").trim());
-  const lines = [];
+function wrapCaptionText(text, maxClauseChars = 12) {
+  const clauses = [];
   let current = "";
-  for (const char of chars) {
+  for (const char of Array.from(String(text || "").trim())) {
     current += char;
-    const punctuationBreak = /[，。！？；：,.!?;:]/u.test(char) && current.length >= maxCharsPerLine - 2;
-    const hardBreak = current.length >= maxCharsPerLine + 2;
-    if (punctuationBreak || hardBreak) {
-      lines.push(current);
+    if (/[，。！？；：,.!?;:]/u.test(char)) {
+      clauses.push(current);
       current = "";
     }
   }
-  if (current) lines.push(current);
+  if (current) clauses.push(current);
+
+  const lines = clauses.flatMap((clause) => {
+    const chars = Array.from(clause);
+    if (chars.length <= maxClauseChars) return [clause];
+    const chunkCount = Math.ceil(chars.length / maxClauseChars);
+    const chunkSize = Math.ceil(chars.length / chunkCount);
+    return Array.from({ length: chunkCount }, (_, index) =>
+      chars.slice(index * chunkSize, (index + 1) * chunkSize).join(""),
+    );
+  });
   return lines.map((line) => esc(line)).join("<br />");
 }
 
