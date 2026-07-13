@@ -4,7 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { normalizeDisplayTitle } from "./lib/title-normalization.mjs";
 
@@ -90,15 +89,6 @@ function readHidden(prompt) {
   });
 }
 
-async function askYesNo(question, fallback = false) {
-  if (!input.isTTY) return fallback;
-  const rl = createInterface({ input, output });
-  const answer = (await rl.question(`${question} [${fallback ? "Y/n" : "y/N"}] `)).trim().toLowerCase();
-  rl.close();
-  if (!answer) return fallback;
-  return answer === "y" || answer === "yes";
-}
-
 function migratePipeline() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(PIPELINE_PATH)) { fs.copyFileSync(EXAMPLE_PATH, PIPELINE_PATH); return "created"; }
@@ -127,16 +117,12 @@ async function main() {
   if (fs.existsSync(STATE_PATH)) {
     try { previousState = JSON.parse(fs.readFileSync(STATE_PATH, "utf8")); } catch { previousState = null; }
   }
-  const firstRun = !previousState || previousState.schemaVersion !== 1;
-  let wereadEnabled = previousState?.weread === "enabled";
-  if (firstRun) {
-    wereadEnabled = await askYesNo("是否启用微信读书 Skill？推荐启用，可获取书籍划线和书评；不启用也能继续", true);
-  }
-  if (wereadEnabled && !process.env.WEREAD_API_KEY && !envFileHasKey()) {
+  const wereadConfigured = Boolean(process.env.WEREAD_API_KEY || envFileHasKey());
+  if (!wereadConfigured) {
     console.log(`请打开微信读书 Skills 官网获取 API Key：${WEREAD_SKILLS_URL}`);
     const key = await readHidden("请输入微信读书 API Key（输入内容不会显示）：");
     if (key) writeEnvKey(key);
-    else if (input.isTTY) console.log("未写入 API Key，将使用公开资料模式。");
+    else if (input.isTTY) console.log("未配置 API Key，将使用公开资料模式。");
   }
 
   const pipelineStatus = migratePipeline();
@@ -144,7 +130,7 @@ async function main() {
     schemaVersion: 1,
     initializedAt: previousState?.initializedAt || new Date().toISOString(),
     lastCheckedAt: new Date().toISOString(),
-    weread: wereadEnabled && (process.env.WEREAD_API_KEY || envFileHasKey()) ? "enabled" : "disabled",
+    weread: process.env.WEREAD_API_KEY || envFileHasKey() ? "enabled" : "not_configured",
     imageCapability: process.env.CODEX_IMAGE_CAPABILITY || "agent-managed",
   };
   fs.writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
