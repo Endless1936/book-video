@@ -7,10 +7,10 @@ This repository is an open-source, natural-language workflow for producing short
 For the first user message in this repository, including a simple greeting such as "你好", run the startup checklist before normal task work unless `.book-automation-state.json` already exists and the user is asking an unrelated repository-maintenance question.
 
 1. Check Node.js 22+, FFmpeg, HyperFrames availability, and bitmap image-generation capability.
-2. Check whether `assets/models/whisper/ggml-base.bin` exists. If missing, run `node scripts/download-whisper-model.mjs`; request network approval when the sandbox requires it.
+2. Check whether `assets/models/whisper/ggml-base.bin` exists. If missing, run `node scripts/download-whisper-model.mjs`. If the download fails, first look for an enabled computer proxy or proxy environment variable; use it for a retry with `--proxy`, asking the user to enable their proxy when none is active. Do not change system network settings silently. If that fails, give the user the browser URL `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin`, then install the user-provided file with `node scripts/download-whisper-model.mjs --from "<local-path>"`.
 3. Run `scripts/init.mjs`. It creates local state and the private pipeline file, asks once whether to enable WeChat Reading, and reports missing prerequisites.
 4. If WeChat Reading is confirmed, install the official Tencent skill locally or through the agent's skill installer. Do not vendor its source into this repository.
-5. If WeChat Reading is enabled, collect `WEREAD_API_KEY` only through hidden TTY input or a local `.env` file with mode `0600`. Never log the key and never accept it as a command argument.
+5. After installation, guide the user to [微信读书 Skills 官网](https://weread.qq.com/r/weread-skills) to obtain the API Key. Collect `WEREAD_API_KEY` only through hidden TTY input or a local `.env` file with mode `0600`. Never log the key and never accept it as a command argument.
 6. If WeChat Reading is declined or unavailable, continue with public research or a user-provided title.
 
 After a body voiceover is supplied, run `node scripts/create-body-timings.mjs "<book>" <script-version>`. It writes Whisper output under the local episode audio folder and creates `body-timings.json` from speech pauses. The default skips the spoken title/author segment; use `--skip-leading 0` when the audio starts directly with the first script line.

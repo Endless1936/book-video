@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import https from "node:https";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const ROOT = process.cwd();
 const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
@@ -60,9 +61,58 @@ function download(url, destination, redirects = 0) {
   });
 }
 
-if (fs.existsSync(MODEL_PATH) && fs.statSync(MODEL_PATH).size >= MIN_BYTES) {
-  console.log(`Whisper model already exists: ${MODEL_PATH}`);
-} else {
-  await download(MODEL_URL, MODEL_PATH);
-  console.log(`Whisper model saved: ${MODEL_PATH}`);
+function installLocal(source, destination) {
+  if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error(`Local model not found: ${source}`);
+  if (fs.statSync(source).size < MIN_BYTES) throw new Error(`Local model is too small: ${source}`);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  const tempPath = `${destination}.${process.pid}.tmp`;
+  fs.copyFileSync(source, tempPath);
+  fs.renameSync(tempPath, destination);
+}
+
+function downloadThroughProxy(url, destination, proxy) {
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  const tempPath = `${destination}.${process.pid}.tmp`;
+  const result = spawnSync("curl", [
+    "--fail", "--location", "--retry", "2", "--connect-timeout", "20",
+    "--proxy", proxy, "--output", tempPath, url,
+  ], { stdio: "inherit", shell: false });
+  if (result.status !== 0) {
+    fs.rmSync(tempPath, { force: true });
+    throw new Error(`Proxy download failed with status ${result.status ?? "unknown"}`);
+  }
+  if (!fs.existsSync(tempPath) || fs.statSync(tempPath).size < MIN_BYTES) {
+    fs.rmSync(tempPath, { force: true });
+    throw new Error("Proxy download produced an incomplete Whisper model");
+  }
+  fs.renameSync(tempPath, destination);
+}
+
+function parseArgs(values) {
+  const result = { localPath: "", proxy: "" };
+  for (let index = 0; index < values.length; index += 1) {
+    if (values[index] === "--from") result.localPath = values[++index] || "";
+    else if (values[index] === "--proxy") result.proxy = values[++index] || "";
+  }
+  return result;
+}
+
+const { localPath, proxy } = parseArgs(process.argv.slice(2));
+
+try {
+  if (localPath) {
+    installLocal(path.resolve(localPath), MODEL_PATH);
+    console.log(`Whisper model installed: ${MODEL_PATH}`);
+  } else if (fs.existsSync(MODEL_PATH) && fs.statSync(MODEL_PATH).size >= MIN_BYTES) {
+    console.log(`Whisper model already exists: ${MODEL_PATH}`);
+  } else {
+    if (proxy) downloadThroughProxy(MODEL_URL, MODEL_PATH, proxy);
+    else await download(MODEL_URL, MODEL_PATH);
+    console.log(`Whisper model saved: ${MODEL_PATH}`);
+  }
+} catch (error) {
+  console.error(`Whisper model setup failed: ${error.message}`);
+  console.error(`Browser download: ${MODEL_URL}`);
+  console.error("After downloading, tell the agent the local file path so it can run: node scripts/download-whisper-model.mjs --from <path>");
+  process.exitCode = 1;
 }

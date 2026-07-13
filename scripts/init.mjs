@@ -16,6 +16,7 @@ const STATE_PATH = path.join(ROOT, ".book-automation-state.json");
 const ENV_PATH = path.join(ROOT, ".env");
 const WHISPER_MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
 const HYPERFRAMES_VERSION = "0.7.33";
+const WEREAD_SKILLS_URL = "https://weread.qq.com/r/weread-skills";
 
 function commandAvailable(command) {
   const args = command === "ffmpeg" ? ["-hide_banner", "-h"] : command === "ffprobe" ? ["-version"] : ["--version"];
@@ -126,6 +127,7 @@ async function main() {
   let wereadEnabled = previousState?.weread === "enabled";
   if (firstRun) wereadEnabled = await askYesNo("是否启用微信读书？");
   if (wereadEnabled && !process.env.WEREAD_API_KEY && !envFileHasKey()) {
+    console.log(`请打开微信读书 Skills 官网获取 API Key：${WEREAD_SKILLS_URL}`);
     const key = await readHidden("请输入微信读书 API Key（输入内容不会显示）：");
     if (key) writeEnvKey(key);
     else if (input.isTTY) console.log("未写入 API Key，将使用公开资料模式。");
