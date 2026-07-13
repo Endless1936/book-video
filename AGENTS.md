@@ -31,7 +31,7 @@ Use `display_title` for folder names, visible labels, and scripts. Keep the exac
 
 ## Production Gates
 
-1. After book selection, create one active script and send it for approval.
+1. After book selection, create one active script and send it for approval. The response must include the complete script text in the message body for direct review; a `script.csv` attachment or file path is supplementary and must never be the only presentation.
 2. Only after script approval, generate prompts and 2-3 AI atmosphere images plus the result bridge.
 3. When body voiceover is supplied, process it with the `story` preset, use ASR only for timing, and keep `script.csv` as subtitle truth.
 4. Mix the shared intro, gear SFX, and a user-selected or randomly chosen BGM. Render the final video only after the relevant media is present.
