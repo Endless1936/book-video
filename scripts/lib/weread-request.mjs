@@ -1,19 +1,10 @@
-import fs from "node:fs";
-import path from "node:path";
+import { readEnvValue } from "./env.mjs";
 
-const ROOT = process.cwd();
 const GATEWAY = "https://i.weread.qq.com/api/agent/gateway";
 export const WEREAD_SKILL_VERSION = "1.0.4";
 
-function envFileValue(name) {
-  const filePath = path.join(ROOT, ".env");
-  if (!fs.existsSync(filePath)) return "";
-  const line = fs.readFileSync(filePath, "utf8").split(/\r?\n/u).find((item) => item.startsWith(`${name}=`));
-  return line ? line.slice(name.length + 1).trim().replace(/^['"]|['"]$/gu, "") : "";
-}
-
 export function getWeReadApiKey() {
-  return process.env.WEREAD_API_KEY || envFileValue("WEREAD_API_KEY");
+  return process.env.WEREAD_API_KEY || readEnvValue("WEREAD_API_KEY");
 }
 
 function publicError(message) {

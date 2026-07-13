@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { stdin as input, stdout as output } from "node:process";
 import { normalizeDisplayTitle } from "./lib/title-normalization.mjs";
+import { readEnvValue } from "./lib/env.mjs";
 
 const ROOT = process.cwd();
 const DATA_DIR = path.join(ROOT, "data");
@@ -60,7 +61,7 @@ function readCsv(filePath) {
 
 function writeEnvKey(key) {
   const existing = fs.existsSync(ENV_PATH) ? fs.readFileSync(ENV_PATH, "utf8").split(/\r?\n/u) : [];
-  const lines = existing.filter((line) => !line.startsWith("WEREAD_API_KEY="));
+  const lines = existing.filter((line) => !/^\s*(?:export\s+)?WEREAD_API_KEY\s*=/u.test(line));
   if (key) lines.push(`WEREAD_API_KEY=${key}`);
   const tempPath = `${ENV_PATH}.${process.pid}.tmp`;
   fs.writeFileSync(tempPath, `${lines.filter(Boolean).join("\n")}\n`, { mode: 0o600 });
@@ -68,8 +69,8 @@ function writeEnvKey(key) {
   fs.renameSync(tempPath, ENV_PATH);
 }
 
-function envFileHasKey() {
-  return fs.existsSync(ENV_PATH) && fs.readFileSync(ENV_PATH, "utf8").split(/\r?\n/u).some((line) => /^WEREAD_API_KEY=\S+/u.test(line));
+function getWereadApiKey() {
+  return process.env.WEREAD_API_KEY || readEnvValue("WEREAD_API_KEY", ENV_PATH);
 }
 
 function readHidden(prompt) {
@@ -117,20 +118,21 @@ async function main() {
   if (fs.existsSync(STATE_PATH)) {
     try { previousState = JSON.parse(fs.readFileSync(STATE_PATH, "utf8")); } catch { previousState = null; }
   }
-  const wereadConfigured = Boolean(process.env.WEREAD_API_KEY || envFileHasKey());
+  let wereadConfigured = Boolean(getWereadApiKey());
   if (!wereadConfigured) {
     console.log(`请打开微信读书 Skills 官网获取 API Key：${WEREAD_SKILLS_URL}`);
     const key = await readHidden("请输入微信读书 API Key（输入内容不会显示）：");
     if (key) writeEnvKey(key);
     else if (input.isTTY) console.log("未配置 API Key，将使用公开资料模式。");
   }
+  wereadConfigured = Boolean(getWereadApiKey());
 
   const pipelineStatus = migratePipeline();
   const state = {
     schemaVersion: 1,
     initializedAt: previousState?.initializedAt || new Date().toISOString(),
     lastCheckedAt: new Date().toISOString(),
-    weread: process.env.WEREAD_API_KEY || envFileHasKey() ? "enabled" : "not_configured",
+    weread: wereadConfigured ? "enabled" : "not_configured",
     imageCapability: process.env.CODEX_IMAGE_CAPABILITY || "agent-managed",
   };
   fs.writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
@@ -146,6 +148,8 @@ async function main() {
     whisperModelPath: path.relative(ROOT, WHISPER_MODEL_PATH),
     whisperModelDownload: "node scripts/download-whisper-model.mjs",
     hyperframes: `npx hyperframes@${HYPERFRAMES_VERSION}`,
+    wereadApiKey: wereadConfigured,
+    wereadApiKeySource: process.env.WEREAD_API_KEY ? "process-env" : wereadConfigured ? "repo-env" : "none",
     platform: `${process.platform}-${os.arch()}`,
   };
   console.log(JSON.stringify({ pipeline: pipelineStatus, checks }, null, 2));

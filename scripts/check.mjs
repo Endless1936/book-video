@@ -18,6 +18,7 @@ const scriptFiles = [
   "scripts/render-episode-final.mjs",
   "scripts/lib/body-timings.mjs",
   "scripts/lib/episode-slug.mjs",
+  "scripts/lib/env.mjs",
   "scripts/lib/script-version.mjs",
   "scripts/lib/title-normalization.mjs",
   "scripts/lib/weread-request.mjs",
@@ -60,6 +61,8 @@ const test = run(process.execPath, ["scripts/tests/test-title-normalization.mjs"
 if (test.status !== 0) throw new Error(test.stderr || "Title normalization test failed");
 const timingTest = run(process.execPath, ["scripts/tests/test-body-timings.mjs"]);
 if (timingTest.status !== 0) throw new Error(timingTest.stderr || "Body timing test failed");
+const envTest = run(process.execPath, ["scripts/tests/test-env.mjs"]);
+if (envTest.status !== 0) throw new Error(envTest.stderr || "Environment parsing test failed");
 
 const templateSourceDir = path.join(ROOT, "templates", "shared-video-template", "intro");
 const templateDir = fs.mkdtempSync(path.join(os.tmpdir(), "book-video-hyperframes-check-"));
