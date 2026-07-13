@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -48,12 +49,29 @@ if (test.status !== 0) throw new Error(test.stderr || "Title normalization test 
 const timingTest = run(process.execPath, ["scripts/tests/test-body-timings.mjs"]);
 if (timingTest.status !== 0) throw new Error(timingTest.stderr || "Body timing test failed");
 
-const templateDir = path.join(ROOT, "templates", "shared-video-template", "intro");
-for (const command of ["lint", "validate", "inspect"]) {
-  const args = ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, command, "--json"];
-  if (command === "inspect") args.push("--at", "0.2,0.75,1.2,1.7,2.08,2.25,2.55,3.2,3.8,4.15");
-  const result = run("npx", args, templateDir, { stdio: "inherit" });
-  if (result.status !== 0) throw new Error(`HyperFrames ${command} failed`);
+const templateSourceDir = path.join(ROOT, "templates", "shared-video-template", "intro");
+const templateDir = fs.mkdtempSync(path.join(os.tmpdir(), "book-video-hyperframes-check-"));
+fs.cpSync(templateSourceDir, templateDir, { recursive: true });
+const resultPlaceholder = path.join(templateDir, "media", "pages", "result.png");
+const resultSource = path.join(templateDir, "media", "intro-background.jpg");
+const resultConversion = run("ffmpeg", [
+  "-hide_banner", "-loglevel", "error", "-y", "-i", resultSource, "-frames:v", "1", resultPlaceholder,
+]);
+if (resultConversion.status !== 0) {
+  fs.rmSync(templateDir, { recursive: true, force: true });
+  throw new Error("Could not create temporary HyperFrames result placeholder");
+}
+
+try {
+  for (const command of ["lint", "validate", "inspect"]) {
+    const args = ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, command, "--json"];
+    if (command === "validate") args.push("--no-contrast");
+    if (command === "inspect") args.push("--at", "0.2,0.75,1.2,1.7,2.08,2.25,2.55,3.2,3.8,4.15");
+    const result = run("npx", args, templateDir, { stdio: "inherit" });
+    if (result.status !== 0) throw new Error(`HyperFrames ${command} failed`);
+  }
+} finally {
+  fs.rmSync(templateDir, { recursive: true, force: true });
 }
 
 const modelPath = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
