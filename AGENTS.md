@@ -38,6 +38,7 @@ Use `display_title` for folder names, visible labels, and scripts. Keep the exac
 3. When body voiceover is supplied, process it with the `story` preset, use ASR only for timing, and keep `script.csv` as subtitle truth.
 4. Mix the shared intro, gear SFX, and a user-selected or randomly chosen BGM. Render the final video only after the relevant media is present.
 5. Replace old episode media only after the new output passes technical checks. Keep one active script, prompt set, image set, audio set, and render.
+6. After a final render or preview succeeds, embed the actual local media in the same reply with an absolute-path Markdown media reference, for example `![最终视频](/absolute/path/to/final.mp4)`. Never provide only a filesystem path and ask the user to locate or open the file. Include the path and brief technical metadata below the preview as supplementary text.
 
 If the user explicitly requests fully automatic production, the script approval gate may be skipped for that episode only.
 
@@ -61,3 +62,7 @@ Project-owned code, documentation, and reusable templates are Apache-2.0. Copyri
 ## Validation
 
 Before publication, run `npm run check`; if HyperFrames is not cached, retry through the execution tool's network-capable escalation, then scan reachable Git history for secrets and private media, verify no full reference transcript remains, and confirm a clean clone initializes with and without WeChat Reading.
+
+## Delivery
+
+Every rendered video must be shown directly in the conversation using an absolute local-path Markdown media reference. This applies to final videos and silent visual previews; a path-only response is incomplete.
