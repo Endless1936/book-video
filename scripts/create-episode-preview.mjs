@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
+import { resolveScriptVersion } from "./lib/script-version.mjs";
 
 const ROOT = process.cwd();
-const [episodeName, version = "A_reference_like"] = process.argv.slice(2);
+const [episodeName, requestedVersion] = process.argv.slice(2);
 
 if (!episodeName) {
   console.error("Usage: node scripts/create-episode-preview.mjs <episode-name> [script-version]");
@@ -11,6 +12,7 @@ if (!episodeName) {
 }
 
 const episodeDir = path.join(ROOT, "episodes", episodeName);
+const version = resolveScriptVersion(episodeDir, requestedVersion);
 const briefPath = path.join(episodeDir, "brief.json");
 const scriptPath = path.join(episodeDir, "script.csv");
 const imagesDir = path.join(episodeDir, "images");

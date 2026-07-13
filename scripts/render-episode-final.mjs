@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
+import { resolveScriptVersion } from "./lib/script-version.mjs";
 
 const ROOT = process.cwd();
 const HYPERFRAMES_VERSION = "0.7.33";
@@ -22,7 +23,7 @@ const INTRO_SCROLL_SFX_FADE_OUT_SECONDS = 0.2;
 const INTRO_SCROLL_SFX_VOLUME = 1.4;
 const INTRO_SCROLL_SFX_PATH = path.join(ROOT, "assets", "sfx", "gear-scroll.mp3");
 
-const [episodeName, scriptVersion = "A_reference_like", bgmInput] = process.argv.slice(2);
+const [episodeName, requestedVersion, bgmInput] = process.argv.slice(2);
 
 if (!episodeName) {
   console.error("Usage: node scripts/render-episode-final.mjs <episode-name> [script-version] [bgm-file-or-name]");
@@ -50,6 +51,7 @@ function slugifyBgmName(input) {
 const slug = slugifyEpisodeName(episodeName);
 const bgmSlug = slugifyBgmName(bgmArg);
 const episodeDir = path.join(ROOT, "episodes", episodeName);
+const scriptVersion = resolveScriptVersion(episodeDir, requestedVersion);
 const audioDir = path.join(episodeDir, "audio");
 const rendersDir = path.join(episodeDir, "renders");
 const timingsPath = path.join(audioDir, "body-timings.json");

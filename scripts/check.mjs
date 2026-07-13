@@ -18,6 +18,7 @@ const scriptFiles = [
   "scripts/render-episode-final.mjs",
   "scripts/lib/body-timings.mjs",
   "scripts/lib/episode-slug.mjs",
+  "scripts/lib/script-version.mjs",
   "scripts/lib/title-normalization.mjs",
   "scripts/lib/weread-request.mjs",
   "scripts/tests/test-body-timings.mjs",

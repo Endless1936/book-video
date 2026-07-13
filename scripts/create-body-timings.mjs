@@ -4,10 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { buildCaptionTimings, buildSpeechSegments, coalesceSpeechSegments, parseSilenceEvents } from "./lib/body-timings.mjs";
+import { resolveScriptVersion } from "./lib/script-version.mjs";
 
 const ROOT = process.cwd();
 const MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
-const [, , episodeName, scriptVersion = "A_reference_like", ...rest] = process.argv;
+const [, , episodeName, requestedVersion, ...rest] = process.argv;
 
 function readOptions(values) {
   const positional = [];
@@ -70,6 +71,7 @@ if (!episodeName) {
 
 const { positional, options } = readOptions(rest);
 const episodeDir = path.join(ROOT, "episodes", episodeName);
+const scriptVersion = resolveScriptVersion(episodeDir, requestedVersion);
 const audioDir = path.join(episodeDir, "audio");
 const scriptPath = path.join(episodeDir, "script.csv");
 const voicePath = path.resolve(ROOT, positional[0] || path.join("episodes", episodeName, "audio", "body-voiceover.mp3"));
