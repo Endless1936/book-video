@@ -7,10 +7,11 @@ This repository is an open-source, natural-language workflow for producing short
 When the user asks to initialize the project:
 
 1. Check Node.js 22+, FFmpeg, HyperFrames availability, and bitmap image-generation capability.
-2. Ask once whether to enable WeChat Reading integration.
-3. If confirmed, install the official Tencent skill locally or through the agent's skill installer. Do not vendor its source into this repository.
-4. Run `scripts/init.mjs`. It creates local state and the private pipeline file. It collects `WEREAD_API_KEY` only through hidden TTY input, writes `.env` with mode `0600`, never logs the key, and never accepts it as a command argument.
-5. If WeChat Reading is declined or unavailable, continue with public research or a user-provided title.
+2. Check whether `assets/models/whisper/ggml-base.bin` exists. If missing, run `node scripts/download-whisper-model.mjs` after user approval for network access.
+3. Ask once whether to enable WeChat Reading integration.
+4. If confirmed, install the official Tencent skill locally or through the agent's skill installer. Do not vendor its source into this repository.
+5. Run `scripts/init.mjs`. It creates local state and the private pipeline file. It collects `WEREAD_API_KEY` only through hidden TTY input, writes `.env` with mode `0600`, never logs the key, and never accepts it as a command argument.
+6. If WeChat Reading is declined or unavailable, continue with public research or a user-provided title.
 
 Initialization must be idempotent. It must not reinstall a verified skill, overwrite a valid key, reset user choices, or duplicate CSV columns.
 

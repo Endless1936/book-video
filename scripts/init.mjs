@@ -14,11 +14,16 @@ const PIPELINE_PATH = path.join(DATA_DIR, "book-pipeline.csv");
 const EXAMPLE_PATH = path.join(DATA_DIR, "book-pipeline.example.csv");
 const STATE_PATH = path.join(ROOT, ".book-automation-state.json");
 const ENV_PATH = path.join(ROOT, ".env");
+const WHISPER_MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
 const HYPERFRAMES_VERSION = "0.7.33";
 
 function commandAvailable(command) {
   const result = spawnSync(command, ["--version"], { stdio: "ignore", shell: false });
   return result.status === 0;
+}
+
+function fileExists(filePath) {
+  return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
 }
 
 function parseCsvLine(line) {
@@ -133,6 +138,9 @@ async function main() {
     ffmpeg: commandAvailable("ffmpeg"),
     npx: commandAvailable("npx"),
     whisper: commandAvailable("whisper-cli"),
+    whisperModel: fileExists(WHISPER_MODEL_PATH),
+    whisperModelPath: path.relative(ROOT, WHISPER_MODEL_PATH),
+    whisperModelDownload: "node scripts/download-whisper-model.mjs",
     hyperframes: `npx hyperframes@${HYPERFRAMES_VERSION}`,
     platform: `${process.platform}-${os.arch()}`,
   };
