@@ -124,7 +124,7 @@ function createIntro(brief) {
       .replaceAll(`{{LIST_AUTHOR_${index + 1}}}`, `${book.author} / 著`);
   });
   fs.writeFileSync(path.join(introDir, "index.html"), html);
-  copyFile(path.join(imagesDir, "result-bridge.png"), path.join(introDir, "media", "pages", "result.jpg"));
+  copyFile(path.join(imagesDir, "result-bridge.png"), path.join(introDir, "media", "pages", "result.png"));
 }
 
 function readOptionalBodyTimings(version) {
