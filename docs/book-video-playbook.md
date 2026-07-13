@@ -4,7 +4,7 @@
 
 ## 工作流
 
-1. 初始化：Agent 先定位当前仓库根目录，一次性检查 Codex 的 HyperFrames/imagegen 能力、Node.js、FFmpeg、`whisper-cli` 和 Whisper 模型；缺少本机运行时依赖时集中说明并征得一次同意，再负责安装。模型按文件大小确认，不用目录列表判断。微信读书 Skill 自动安装启用；只有缺少 API Key 时询问用户，确认后打开官网，明确提示用户获取 Key 后回到本对话发给 Agent，再安全写入本地配置。
+1. 初始化：Agent 先定位当前仓库根目录并运行 `node scripts/init.mjs`，一次性检查 Codex 的 HyperFrames/imagegen 能力、Node.js、FFmpeg、`whisper-cli` 和 Whisper 模型。不要根据 FFmpeg/FFprobe 的版本输出首行判断是否安装，统一以检查命令退出状态为准。缺少本机运行时依赖时集中说明并征得一次同意，再负责安装。模型按文件大小确认，不用目录列表判断。微信读书 Skill 自动安装启用；只有缺少 API Key 时询问用户，确认后打开官网，明确提示用户获取 Key 后回到本对话发给 Agent，再安全写入本地配置。
 2. 选书：读取本地候选池；没有候选时先询问偏好，再搜索五本并标出首选。
 3. 书目确认：确认书名、作者、版本和 `display_title`。
 4. 文案确认：按本文的脚本原则只写一版文案，等待用户确认。
