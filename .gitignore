@@ -22,6 +22,7 @@ episodes/*
 skills-lock.json
 tmp/
 docs/superpowers/
+.worktrees/
 
 # Dependencies and build output
 node_modules/
