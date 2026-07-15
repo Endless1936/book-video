@@ -332,7 +332,7 @@ export function validateStageArtifacts(stage, episodeDir, version) {
     const file = path.join(episodeDir, relative);
     if (!fs.existsSync(file) || fs.statSync(file).size < minimumBytes) errors.push(`Missing or invalid ${relative}`);
   };
-  if (["researched", "scripted", "illustrated", "voiced", "timed", "rendered", "verified"].includes(stage)) requireFile("brief.json");
+  if (["selected", "researched", "scripted", "illustrated", "voiced", "timed", "rendered", "verified"].includes(stage)) requireFile("brief.json");
   if (["scripted", "illustrated", "voiced", "timed", "rendered", "verified"].includes(stage)) {
     requireFile("script.csv");
     if (!errors.length) errors.push(...validateBodyScript(readActiveScript(episodeDir, version)).errors);
@@ -465,6 +465,7 @@ git commit -m "feat: orchestrate resumable book video jobs"
 - Create: `scripts/lib/production-report.mjs`
 - Create: `scripts/tests/test-production-report.mjs`
 - Modify: `scripts/auto-produce.mjs`
+- Modify: `scripts/record-production-stage.mjs`
 
 **Interfaces:**
 - Consumes: episode directory, active render path, voice name, BGM name, and `ffprobe` JSON.
@@ -529,7 +530,9 @@ export function writeProductionReport(episodeDir, report) {
 
 - [ ] **Step 4: Connect the `verified` action**
 
-In `auto-produce.mjs`, make `verify_and_report` require Agent-provided local configuration fields `jianyingVoice` and `lastBgm`, locate the only active MP4 under `renders/`, invoke `ffprobe -of json`, call `buildProductionReport()`, write the report, and complete `verified`. If no single render exists, emit a failure JSON without replacing state.
+In `auto-produce.mjs`, make `verify_and_report` require Agent-provided local configuration fields `jianyingVoice` and `lastBgm`, locate the only active MP4 under `renders/`, invoke `ffprobe -of json`, call `buildProductionReport()`, and write the report without directly changing production state. The Agent must then inspect representative extracted frames for blank frames, placeholder text, and subtitle overflow, record `visualChecks` in `production-report.json`, and finish through `record-production-stage.mjs <book> verified success`. If no single render exists or a visual check fails, record the `verified` stage as a failure instead of completing it.
+
+Update `record-production-stage.mjs` so `verified success` additionally requires `production-report.json` with `verified: true` and `visualChecks.blankFrames === true`, `visualChecks.placeholderText === true`, and `visualChecks.subtitleOverflow === true`.
 
 - [ ] **Step 5: Run report and orchestration tests**
 
@@ -540,7 +543,7 @@ Expected: both scripts end in `ok`.
 - [ ] **Step 6: Commit reporting**
 
 ```bash
-git add scripts/lib/production-report.mjs scripts/tests/test-production-report.mjs scripts/auto-produce.mjs
+git add scripts/lib/production-report.mjs scripts/tests/test-production-report.mjs scripts/auto-produce.mjs scripts/record-production-stage.mjs
 git commit -m "feat: report verified book video output"
 ```
 
@@ -584,6 +587,7 @@ Build the text pasted into Jianying from buildVoiceoverText(); do not retype or 
 Before export, record the task start time. Accept only an MP3 created after that time, at least 1 KB, and with a positive ffprobe duration.
 Store the chosen voice in .book-video-config.json. On later runs, reuse it; if absent, select a natural, restrained Mandarin narrative voice and update the config.
 On UI failure, save a screenshot under episodes/<book>/ui-failures/, record failStage(), and retry no more than the configured limit.
+For verify_and_report, inspect representative extracted frames for blank frames, placeholder text, and subtitle overflow. Write explicit boolean results under production-report.json.visualChecks before recording verified success; any false result blocks completion.
 For batch mode, continue to the next book after a terminal failure and include every result in the summary.
 ```
 
@@ -742,5 +746,6 @@ If no tracked correction was required, do not create an empty commit.
 - [ ] UI failures preserve earlier artifacts and have a bounded retry count.
 - [ ] Batch failures do not stop subsequent books.
 - [ ] Final report rejects wrong dimensions, frame rate, codecs, missing audio, and duration over 60 seconds.
+- [ ] Final report contains successful visual checks for blank frames, placeholder text, and subtitle overflow before `verified` can complete.
 - [ ] A real Jianying run produces a directly previewable MP4.
 - [ ] `npm run test` and `npm run check` pass.
