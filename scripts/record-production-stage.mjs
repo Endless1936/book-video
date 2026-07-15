@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import path from "node:path";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { validateStageArtifacts } from "./lib/production-artifacts.mjs";
@@ -27,6 +28,16 @@ try {
     if (!message) throw new Error("Failure requires a non-empty message");
     updated = failStage(state, stage, new Error(message));
   } else {
+    if (stage === "verified") {
+      const reportFile = path.join(episodeDir, "production-report.json");
+      const report = fs.existsSync(reportFile) ? JSON.parse(fs.readFileSync(reportFile, "utf8")) : {};
+      const errors = [];
+      if (report.verified !== true) errors.push("production-report.json verified must be true");
+      for (const name of ["blankFrames", "placeholderText", "subtitleOverflow"]) {
+        if (report.visualChecks?.[name] !== true) errors.push(`production-report.json visualChecks.${name} must be true`);
+      }
+      if (errors.length) throw new Error(errors.join("; "));
+    }
     const activeScriptVersion = stage === "scripted"
       ? resolveScriptVersion(episodeDir)
       : state.activeScriptVersion;

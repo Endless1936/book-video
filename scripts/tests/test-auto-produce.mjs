@@ -63,12 +63,12 @@ try {
     assert.equal(action("book", book).status, 0);
     setCurrentStage(book, "voiced");
     assert.deepEqual(JSON.parse(action("resume", book).stdout).inputs, {
-      executable: "node",
+      executable: process.execPath,
       args: ["scripts/create-body-timings.mjs", book],
     });
     setCurrentStage(book, "timed");
     assert.deepEqual(JSON.parse(action("resume", book).stdout).inputs, {
-      executable: "node",
+      executable: process.execPath,
       args: ["scripts/render-episode-final.mjs", book],
     });
   }
@@ -112,6 +112,79 @@ try {
     inputs: { theme: "孤独与成长", rerunAs: "book <selected-title>" },
     expectedOutputs: ["data/book-pipeline.csv"],
   });
+
+  const verificationBook = "验收视频";
+  assert.equal(action("book", verificationBook).status, 0);
+  const verificationEpisode = episodeDir(verificationBook);
+  setCurrentStage(verificationBook, "rendered");
+  const verificationStateFile = path.join(verificationEpisode, "production-state.json");
+  const verificationState = JSON.parse(fs.readFileSync(verificationStateFile, "utf8"));
+  fs.writeFileSync(verificationStateFile, `${JSON.stringify({ ...verificationState, activeScriptVersion: "A" }, null, 2)}\n`);
+  fs.writeFileSync(path.join(verificationEpisode, "brief.json"), JSON.stringify({ display_title: verificationBook }));
+  fs.writeFileSync(path.join(verificationEpisode, "script.csv"), [
+    "version,order,text,duration_hint",
+    "A,1,有些路只能慢慢走这是一段足够长的测试文本用于验证脚本内容。,10",
+  ].join("\n"));
+  fs.mkdirSync(path.join(verificationEpisode, "images"), { recursive: true });
+  for (const name of ["result-bridge.png", "atmosphere-1.png", "atmosphere-2.png", "atmosphere-3.png"]) {
+    fs.writeFileSync(path.join(verificationEpisode, "images", name), Buffer.alloc(1024));
+  }
+  fs.mkdirSync(path.join(verificationEpisode, "audio"), { recursive: true });
+  fs.writeFileSync(path.join(verificationEpisode, "audio", "body-voiceover.mp3"), Buffer.alloc(1024));
+  fs.writeFileSync(path.join(verificationEpisode, "audio", "body-timings.json"), "{}\n");
+  fs.mkdirSync(path.join(verificationEpisode, "renders"), { recursive: true });
+  fs.writeFileSync(path.join(verificationEpisode, "renders", "final.mp4"), "video");
+
+  const missingConfig = action("resume", verificationBook);
+  assert.equal(missingConfig.status, 1);
+  assert.match(missingConfig.stderr, /jianyingVoice.*lastBgm/s);
+
+  fs.writeFileSync(path.join(root, ".book-automation-state.json"), JSON.stringify({
+    jianyingVoice: "自然叙事",
+    lastBgm: "如愿.mp3",
+  }));
+  fs.writeFileSync(path.join(verificationEpisode, "renders", "old.mp4"), "video");
+  const multipleRenders = action("resume", verificationBook);
+  assert.equal(multipleRenders.status, 1);
+  assert.match(multipleRenders.stderr, /exactly one active MP4/);
+  fs.rmSync(path.join(verificationEpisode, "renders", "old.mp4"));
+
+  const fakeBin = path.join(root, "bin");
+  fs.mkdirSync(fakeBin);
+  const fakeFfprobe = path.join(fakeBin, "ffprobe");
+  fs.writeFileSync(fakeFfprobe, `#!/bin/sh\nprintf '%s' '{"streams":[{"codec_type":"video","codec_name":"h264","width":720,"height":960,"avg_frame_rate":"30/1"},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"52.4"}}'\n`, { mode: 0o700 });
+  const verifiedAction = spawnSync(process.execPath, [autoCli, "resume", verificationBook], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` },
+  });
+  assert.equal(verifiedAction.status, 0, verifiedAction.stderr);
+  const verificationResult = JSON.parse(verifiedAction.stdout);
+  assert.equal(verificationResult.stage, "verified");
+  assert.equal(verificationResult.action, "inspect_visual_frames");
+  assert.equal(verificationResult.inputs.report, "production-report.json");
+  assert.equal(verificationResult.inputs.render, "renders/final.mp4");
+  const technicalReport = JSON.parse(fs.readFileSync(path.join(verificationEpisode, "production-report.json"), "utf8"));
+  assert.equal(technicalReport.verified, true);
+  assert.equal(technicalReport.visualChecks, undefined);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(verificationEpisode, "production-state.json"), "utf8")).currentStage, "rendered");
+
+  const noVisualChecks = record(verificationBook, "verified", "success");
+  assert.equal(noVisualChecks.status, 1);
+  assert.match(noVisualChecks.stderr, /visualChecks\.blankFrames/);
+  fs.writeFileSync(path.join(verificationEpisode, "production-report.json"), `${JSON.stringify({
+    ...technicalReport,
+    visualChecks: { blankFrames: true, placeholderText: true, subtitleOverflow: false },
+  }, null, 2)}\n`);
+  const failedVisualCheck = record(verificationBook, "verified", "success");
+  assert.equal(failedVisualCheck.status, 1);
+  assert.match(failedVisualCheck.stderr, /visualChecks\.subtitleOverflow/);
+  fs.writeFileSync(path.join(verificationEpisode, "production-report.json"), `${JSON.stringify({
+    ...technicalReport,
+    visualChecks: { blankFrames: true, placeholderText: true, subtitleOverflow: true },
+  }, null, 2)}\n`);
+  const completedVerification = record(verificationBook, "verified", "success");
+  assert.equal(completedVerification.status, 0, completedVerification.stderr);
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }

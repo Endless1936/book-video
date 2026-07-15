@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { parseProductionCommand } from "./lib/production-command.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
+import { buildProductionReport, writeProductionReport } from "./lib/production-report.mjs";
 import {
   createProductionState,
+  failStage,
   nextStage,
   readProductionState,
   writeProductionState,
@@ -37,6 +40,46 @@ function loadOrCreate(book, mode, batchId = "") {
   return readProductionState(episodeDir);
 }
 
+function verifyAndReport(book, episodeDir) {
+  const configFile = path.join(process.cwd(), ".book-automation-state.json");
+  const config = fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, "utf8")) : {};
+  const missing = ["jianyingVoice", "lastBgm"].filter((field) => !config[field]);
+  if (missing.length) throw new Error(`Missing local configuration: ${missing.join(", ")}`);
+
+  const rendersDir = path.join(episodeDir, "renders");
+  const renders = fs.existsSync(rendersDir)
+    ? fs.readdirSync(rendersDir).filter((name) => name.toLowerCase().endsWith(".mp4"))
+    : [];
+  if (renders.length !== 1) throw new Error("Verification requires exactly one active MP4 under renders/");
+  const relativeRender = path.join("renders", renders[0]);
+  const result = spawnSync("ffprobe", [
+    "-v", "error",
+    "-show_streams",
+    "-show_format",
+    "-of", "json",
+    path.join(episodeDir, relativeRender),
+  ], { encoding: "utf8", shell: false });
+  if (result.status !== 0) throw new Error(`ffprobe failed: ${(result.stderr || "unknown error").trim()}`);
+  let probe;
+  try { probe = JSON.parse(result.stdout); } catch { throw new Error("ffprobe returned invalid JSON"); }
+  const report = buildProductionReport({
+    book,
+    voice: config.jianyingVoice,
+    bgm: config.lastBgm,
+    output: relativeRender,
+    probe,
+  });
+  writeProductionReport(episodeDir, report);
+  return {
+    status: "action_required",
+    book,
+    stage: "verified",
+    action: "inspect_visual_frames",
+    inputs: { render: relativeRender, report: "production-report.json" },
+    expectedOutputs: ["production-report.json"],
+  };
+}
+
 function emitBookAction(book, mode, batchId = "") {
   const state = loadOrCreate(book, mode, batchId);
   const stage = nextStage(state);
@@ -44,8 +87,16 @@ function emitBookAction(book, mode, batchId = "") {
     return { status: "complete", book, stage: null, action: null, inputs: {}, expectedOutputs: [] };
   }
   const definition = ACTIONS[stage];
+  if (definition.action === "verify_and_report") {
+    try {
+      return verifyAndReport(book, episodeDirectory(book));
+    } catch (error) {
+      writeProductionState(episodeDirectory(book), failStage(state, stage, error));
+      throw error;
+    }
+  }
   const inputs = definition.script
-    ? { executable: "node", args: [definition.script, book] }
+    ? { executable: process.execPath, args: [definition.script, book] }
     : { ...(definition.inputs || {}) };
   return {
     status: "action_required",
