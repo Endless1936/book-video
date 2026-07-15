@@ -19,6 +19,31 @@ Copyright (c) 2026 prototech, endless, and 未济.
 5. Codex 用 ASR 生成时间参考，以 `script.csv` 为字幕真源，对齐字幕、混入 BGM，并渲染最终 MP4。
 6. 如果你要求替换文案、图片或音频，Codex 会生成新方案，通过检查后覆盖旧方案。
 
+## 全自动制作
+
+你可以明确要求 Codex 连续完成一集，例如：
+
+- “全自动制作《我与地坛》，中间不用问我确认。”
+- “全自动选一本关于孤独与成长的书，并做成视频。”
+- “批量制作《我与地坛》《人间草木》，单本失败时继续下一本。”
+
+全自动模式会覆盖普通流程的人工审批门（包括文案确认），但仅对当次指定的单集有效。普通制作和之后的其他视频仍会按原流程请你确认。
+
+第一次制作时，Codex 会在剪映中选择一个自然、克制的普通话叙事音色，并把选择保存在本地 `.book-video-config.json` 中；之后的制作会自动复用它。如果界面或运行中断，再次要求 Codex 继续即可：它会读取 `episodes/<书名>/production-state.json` ，从下一个未完成阶段恢复，而不是重做已成功的步骤。
+
+### 命令行入口
+
+以下命令主要用于调试或与 Codex 协作：
+
+```bash
+node scripts/auto-produce.mjs book "我与地坛"
+node scripts/auto-produce.mjs auto --theme "孤独与自我成长"
+node scripts/auto-produce.mjs batch "我与地坛" "人间草木"
+node scripts/auto-produce.mjs resume "我与地坛"
+```
+
+独立运行 CLI 只会输出 JSON Agent action，其中命令动作使用结构化的 `inputs: { executable, args }`；它不会自己操作剪映或生成图片。完整自动化由 Codex 解析这些动作，用内置位图生成能力制作氛围图，并通过 Codex Computer Use 操作剪映界面。Node.js 不会也不应直接控制剪映。每个动作成功后，Agent 会用 `scripts/record-production-stage.mjs` 记录阶段，再调用 `resume` 继续。
+
 你也可以直接用自然语言操作，例如：
 
 - “你好。”

@@ -45,6 +45,20 @@ The intro book list is a fixed six-book template list stored in `templates/share
 
 If the user explicitly requests fully automatic production, the script approval gate may be skipped for that episode only.
 
+### Fully Automatic Agent Loop
+
+When the user explicitly requests fully automatic production, run `node scripts/auto-produce.mjs` and parse the emitted JSON action. This mode overrides the ordinary human approval gates, including script approval, for that episode only; do not ask for approval between its stages. It does not change the approval rules for later episodes or ordinary production.
+
+For each `action_required` response, execute exactly one emitted action and produce exactly its `expectedOutputs`. For `run_command`, execute the structured `inputs.executable` with `inputs.args` as separate arguments; never reconstruct a shell command from them. After the output exists, run `node scripts/record-production-stage.mjs "<book>" "<stage>" success`, then run `node scripts/auto-produce.mjs resume "<book>"`. Continue until the response status is `complete` or the configured retry limit is exhausted. On an action failure, record it with `record-production-stage.mjs <book> <stage> failure <message>` before deciding whether to retry.
+
+Use WeChat Reading for research when it is configured and public research otherwise. For `generate_images`, use Codex's built-in bitmap image generation. For `generate_jianying_voiceover`, Codex must use Computer Use to operate Jianying; Node.js only emits the action and must never attempt to invoke Computer Use or control Jianying directly. Build the pasted text with `buildVoiceoverText()` from the active `brief.json` and `script.csv`; never retype, edit, or paraphrase it.
+
+Before starting the Jianying export, record the task start time. Accept only an MP3 created after that time, at least 1 KB, and with a positive duration reported by `ffprobe`. Store the selected voice in local `.book-video-config.json`. Reuse it on later runs; if it is absent, choose a natural, restrained Mandarin narrative voice once and update the config.
+
+If UI operation fails, save a screenshot under `episodes/<book>/ui-failures/`, record the stage failure through `failStage()` (via `record-production-stage.mjs ... failure`), and retry no more than the configured limit. For `verify_and_report`, inspect representative extracted frames for blank frames, placeholder text, and subtitle overflow. Write explicit boolean results to `production-report.json.visualChecks.blankFrames`, `.placeholderText`, and `.subtitleOverflow` before recording `verified` success; all three must be `true`, and any `false` blocks completion.
+
+In batch mode, a terminal failure for one book must not stop the remaining books. Continue with the next book and include every success and failure in the final batch summary.
+
 ## Visual And Audio Rules
 
 - Use the shared template in `templates/shared-video-template/` as the only visual baseline.
