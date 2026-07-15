@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 .book-automation-state.json
+.book-video-config.json
+.book-video-batches/
 .uploads/
 
 # Local candidate data
@@ -16,12 +18,17 @@ assets/models/
 # Local episode outputs
 episodes/*
 !episodes/README.md
+episodes/*/production-state.json
+episodes/*/production-report.json
+episodes/*/ui-failures/
 
 # Local agent/plugin state
 .agents/
 skills-lock.json
 tmp/
 docs/superpowers/
+.superpowers/
+.worktrees/
 
 # Dependencies and build output
 node_modules/

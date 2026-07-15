@@ -19,6 +19,40 @@ Copyright (c) 2026 prototech, endless, and 未济.
 5. Codex 用 ASR 生成时间参考，以 `script.csv` 为字幕真源，对齐字幕、混入 BGM，并渲染最终 MP4。
 6. 如果你要求替换文案、图片或音频，Codex 会生成新方案，通过检查后覆盖旧方案。
 
+## 全自动制作
+
+你可以明确要求 Codex 连续完成一集，例如：
+
+- “全自动制作《我与地坛》，中间不用问我确认。”
+- “全自动选一本关于孤独与成长的书，并做成视频。”
+- “批量制作《我与地坛》《人间草木》，单本失败时继续下一本。”
+
+全自动模式会覆盖普通流程的人工审批门（包括文案确认），但仅对当次指定的单集有效。普通制作和之后的其他视频仍会按原流程请你确认。
+
+第一次制作时，Codex 会在剪映中选择一个自然、克制的普通话叙事音色，并把选择保存在本地 `.book-video-config.json` 中；之后的制作会自动复用它。如果界面或运行中断，再次要求 Codex 继续即可：它会读取 `episodes/<书名>/production-state.json` ，从下一个未完成阶段恢复，而不是重做已成功的步骤。
+
+首次进入配音阶段前必须完成真实的剪映 Unicode 文本提交与 MP3 导出冒烟测试，并将 `jianyingCapability.unicodeCommitAndExport` 记录为 `true`。在配音前恢复会被阻止，已经越过配音阶段的任务仍可继续。当前环境尚未完成该实机测试，因此仍处于阻塞状态；仓库测试通过不代表剪映导出或最终 MP4 已交付成功。
+
+`.book-video-config.json` 统一包含 `jianyingVoice`、`jianyingApp`、`jianyingExportDir`、`lastBgm`、默认主题/受众/BGM 策略、自动选书排除策略、`stageTimeoutMs`、逐阶段 `stageRetryLimit` 和 `jianyingCapability`。所有字段在使用前校验。
+
+### 命令行入口
+
+以下命令主要用于调试或与 Codex 协作：
+
+```bash
+node scripts/auto-produce.mjs book "我与地坛"
+node scripts/auto-produce.mjs auto --theme "孤独与自我成长"
+node scripts/auto-produce.mjs batch "我与地坛" "人间草木"
+node scripts/auto-produce.mjs batch --resume "<batch-id>"
+node scripts/auto-produce.mjs resume "我与地坛"
+```
+
+独立运行 CLI 只会输出 JSON Agent action，其中命令动作使用结构化的 `inputs: { executable, args }`；它不会自己操作剪映或生成图片。完整自动化由 Codex 解析这些动作，用内置位图生成能力制作氛围图，并通过 Codex Computer Use 操作剪映界面。Node.js 不会也不应直接控制剪映。每个动作成功后，Agent 会用 `scripts/record-production-stage.mjs` 记录阶段，再调用 `resume` 继续。
+
+批次状态原子写入 `.book-video-batches/<batch-id>.json`，保存书单顺序、当前位置、逐书结果和时间戳。输出携带同一个 `batchId` 和结构化续跑参数；成功或达到重试上限的终止失败都会推进到下一本，最终摘要列出全部书籍、失败阶段和续跑建议。
+
+阶段门会解析书目信息和提示词、解码四张规定名称的位图、验证配音晚于本次尝试且含正时长音轨，并要求渲染目录恰有一个非空且含视频流的可读 MP4。最终报告记录字幕数、必需图片数，以及片头口播、正文口播、BGM 和齿轮音效检查结果。
+
 你也可以直接用自然语言操作，例如：
 
 - “你好。”

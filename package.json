@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "auto": "node scripts/auto-produce.mjs",
+    "test": "node scripts/tests/test-title-normalization.mjs && node scripts/tests/test-env.mjs && node scripts/tests/test-body-timings.mjs && node scripts/tests/test-production-command.mjs && node scripts/tests/test-production-state.mjs && node scripts/tests/test-production-artifacts.mjs && node scripts/tests/test-production-report.mjs && node scripts/tests/test-auto-produce.mjs && node scripts/tests/test-final-findings.mjs",
     "check": "node scripts/check.mjs"
   }
 }
