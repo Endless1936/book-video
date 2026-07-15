@@ -56,4 +56,13 @@ try {
   fs.rmSync(root, { recursive: true, force: true });
 }
 
+const failedWriteRoot = fs.mkdtempSync(path.join(os.tmpdir(), "production-report-failure-"));
+try {
+  fs.mkdirSync(path.join(failedWriteRoot, "production-report.json"));
+  assert.throws(() => writeProductionReport(failedWriteRoot, report));
+  assert.equal(fs.readdirSync(failedWriteRoot).some((name) => name.endsWith(".tmp")), false);
+} finally {
+  fs.rmSync(failedWriteRoot, { recursive: true, force: true });
+}
+
 console.log("production report tests: ok");

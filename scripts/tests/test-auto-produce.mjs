@@ -135,9 +135,21 @@ try {
   fs.mkdirSync(path.join(verificationEpisode, "renders"), { recursive: true });
   fs.writeFileSync(path.join(verificationEpisode, "renders", "final.mp4"), "video");
 
+  const staleReport = {
+    verified: true,
+    visualChecks: { blankFrames: true, placeholderText: true, subtitleOverflow: true },
+  };
+  fs.writeFileSync(path.join(verificationEpisode, "production-report.json"), JSON.stringify(staleReport));
+
   const missingConfig = action("resume", verificationBook);
   assert.equal(missingConfig.status, 1);
   assert.match(missingConfig.stderr, /jianyingVoice.*lastBgm/s);
+  assert.equal(fs.existsSync(path.join(verificationEpisode, "production-report.json")), false);
+
+  fs.writeFileSync(path.join(verificationEpisode, "production-report.json"), JSON.stringify(staleReport));
+  const staleReportAfterFailure = record(verificationBook, "verified", "success");
+  assert.equal(staleReportAfterFailure.status, 1);
+  assert.match(staleReportAfterFailure.stderr, /current verified verification attempt failed/);
 
   fs.writeFileSync(path.join(root, ".book-automation-state.json"), JSON.stringify({
     jianyingVoice: "自然叙事",
@@ -147,7 +159,16 @@ try {
   const multipleRenders = action("resume", verificationBook);
   assert.equal(multipleRenders.status, 1);
   assert.match(multipleRenders.stderr, /exactly one active MP4/);
+  assert.equal(fs.existsSync(path.join(verificationEpisode, "production-report.json")), false);
   fs.rmSync(path.join(verificationEpisode, "renders", "old.mp4"));
+
+  const missingFfprobe = spawnSync(process.execPath, [autoCli, "resume", verificationBook], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: path.join(root, "missing-bin") },
+  });
+  assert.equal(missingFfprobe.status, 1);
+  assert.match(missingFfprobe.stderr, /spawnSync ffprobe ENOENT/);
 
   const fakeBin = path.join(root, "bin");
   fs.mkdirSync(fakeBin);
@@ -167,7 +188,9 @@ try {
   const technicalReport = JSON.parse(fs.readFileSync(path.join(verificationEpisode, "production-report.json"), "utf8"));
   assert.equal(technicalReport.verified, true);
   assert.equal(technicalReport.visualChecks, undefined);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(verificationEpisode, "production-state.json"), "utf8")).currentStage, "rendered");
+  const technicallyVerifiedState = JSON.parse(fs.readFileSync(path.join(verificationEpisode, "production-state.json"), "utf8"));
+  assert.equal(technicallyVerifiedState.currentStage, "rendered");
+  assert.equal(technicallyVerifiedState.failure, null);
 
   const noVisualChecks = record(verificationBook, "verified", "success");
   assert.equal(noVisualChecks.status, 1);

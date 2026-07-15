@@ -33,3 +33,12 @@ Result: 8 test scripts passed, exit status 0.
 
 - The three visual check booleans are Agent attestations; automated technical validation does not populate them.
 - Re-running technical verification overwrites the report, intentionally requiring a fresh visual review.
+
+## Review Follow-up
+
+- A failed `verify_and_report` attempt now removes any previous production report before validation, so stale technical and visual attestations cannot be reused.
+- `record-production-stage.mjs ... verified success` rejects a state whose current `failure.stage` is `verified`; a new successful technical verification clears that failure without advancing the stage.
+- `ffprobe` process-spawn errors now prefer `result.error.message` over stderr fallback text.
+- Atomic report writing now attempts to remove its temporary file in `finally`, including after write or rename failure.
+- RED evidence: the new tests failed because a stale report and a failed-rename temporary file remained present.
+- GREEN evidence: focused production-report and auto-produce tests passed after the fixes.

@@ -33,6 +33,10 @@ export function buildProductionReport({ book, voice, bgm, output, probe, now = n
 export function writeProductionReport(episodeDir, report) {
   const destination = path.join(episodeDir, "production-report.json");
   const temporary = `${destination}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-  fs.renameSync(temporary, destination);
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temporary, destination);
+  } finally {
+    try { fs.unlinkSync(temporary); } catch { /* best-effort cleanup */ }
+  }
 }

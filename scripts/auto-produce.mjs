@@ -59,7 +59,9 @@ function verifyAndReport(book, episodeDir) {
     "-of", "json",
     path.join(episodeDir, relativeRender),
   ], { encoding: "utf8", shell: false });
-  if (result.status !== 0) throw new Error(`ffprobe failed: ${(result.stderr || "unknown error").trim()}`);
+  if (result.status !== 0) {
+    throw new Error(`ffprobe failed: ${result.error?.message || result.stderr?.trim() || "unknown error"}`);
+  }
   let probe;
   try { probe = JSON.parse(result.stdout); } catch { throw new Error("ffprobe returned invalid JSON"); }
   const report = buildProductionReport({
@@ -88,10 +90,19 @@ function emitBookAction(book, mode, batchId = "") {
   }
   const definition = ACTIONS[stage];
   if (definition.action === "verify_and_report") {
+    const episodeDir = episodeDirectory(book);
     try {
-      return verifyAndReport(book, episodeDirectory(book));
+      const reportFile = path.join(episodeDir, "production-report.json");
+      if (fs.existsSync(reportFile)) fs.unlinkSync(reportFile);
+      const action = verifyAndReport(book, episodeDir);
+      writeProductionState(episodeDir, {
+        ...state,
+        failure: null,
+        updatedAt: new Date().toISOString(),
+      });
+      return action;
     } catch (error) {
-      writeProductionState(episodeDirectory(book), failStage(state, stage, error));
+      writeProductionState(episodeDir, failStage(state, stage, error));
       throw error;
     }
   }

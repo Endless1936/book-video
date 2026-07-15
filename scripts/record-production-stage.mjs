@@ -29,6 +29,9 @@ try {
     updated = failStage(state, stage, new Error(message));
   } else {
     if (stage === "verified") {
+      if (state.failure?.stage === "verified") {
+        throw new Error("Cannot complete verified: current verified verification attempt failed");
+      }
       const reportFile = path.join(episodeDir, "production-report.json");
       const report = fs.existsSync(reportFile) ? JSON.parse(fs.readFileSync(reportFile, "utf8")) : {};
       const errors = [];
