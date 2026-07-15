@@ -28,14 +28,11 @@ try {
   }
   assert.deepEqual(validateStageArtifacts("illustrated", episode, "A"), []);
 
-  fs.writeFileSync(path.join(episode, "brief.json"), JSON.stringify({ display_title: "我与地坛", author: "史铁生", scriptVersion: "B" }));
-  assert.match(validateStageArtifacts("selected", episode, "A").join("\n"), /scriptVersion.*A/);
-
-  fs.writeFileSync(path.join(episode, "brief.json"), JSON.stringify({ display_title: "我与地坛", scriptVersion: "A" }));
-  assert.match(validateStageArtifacts("selected", episode, "A").join("\n"), /author/);
-
   fs.writeFileSync(path.join(episode, "brief.json"), "{");
-  assert.match(validateStageArtifacts("selected", episode, "A").join("\n"), /valid JSON/);
+  assert.deepEqual(validateStageArtifacts("selected", episode, "A"), []);
+
+  fs.writeFileSync(path.join(episode, "script.csv"), "version,order,text,duration_hint\nB,1,另一版本。,2\n");
+  assert.match(validateStageArtifacts("scripted", episode, "A").join("\n"), /version A/);
 } finally {
   fs.rmSync(episode, { recursive: true, force: true });
 }

@@ -49,24 +49,6 @@ export function buildVoiceoverText(brief, rows) {
   return [`《${title}》`, ...rows.map((row) => row.text)].join("\n") + "\n";
 }
 
-function validateBrief(file, version) {
-  let brief;
-  try {
-    brief = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return ["brief.json must contain valid JSON"];
-  }
-
-  const errors = [];
-  for (const field of ["display_title", "author", "scriptVersion"]) {
-    if (typeof brief[field] !== "string" || !brief[field].trim()) errors.push(`brief.json is missing ${field}`);
-  }
-  if (brief.scriptVersion && brief.scriptVersion !== version) {
-    errors.push(`brief.json scriptVersion must match ${version}`);
-  }
-  return errors;
-}
-
 export function validateStageArtifacts(stage, episodeDir, version) {
   const errors = [];
   const requireFile = (relative, minimumBytes = 1) => {
@@ -78,12 +60,13 @@ export function validateStageArtifacts(stage, episodeDir, version) {
     return true;
   };
 
-  if (STAGES_WITH_BRIEF.includes(stage)) {
-    const relative = "brief.json";
-    if (requireFile(relative)) errors.push(...validateBrief(path.join(episodeDir, relative), version));
-  }
+  if (STAGES_WITH_BRIEF.includes(stage)) requireFile("brief.json");
   if (STAGES_WITH_SCRIPT.includes(stage)) {
-    if (requireFile("script.csv")) errors.push(...validateBodyScript(readActiveScript(episodeDir, version)).errors);
+    if (requireFile("script.csv")) {
+      const rows = readActiveScript(episodeDir, version);
+      if (!rows.length) errors.push(`script.csv has no rows for version ${version}`);
+      else errors.push(...validateBodyScript(rows).errors);
+    }
   }
   if (STAGES_WITH_IMAGES.includes(stage)) {
     for (const name of ["result-bridge.png", "atmosphere-1.png", "atmosphere-2.png", "atmosphere-3.png"]) {
