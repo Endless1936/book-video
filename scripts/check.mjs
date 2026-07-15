@@ -20,6 +20,7 @@ const scriptFiles = [
   "scripts/auto-produce.mjs",
   "scripts/record-production-stage.mjs",
   "scripts/lib/body-timings.mjs",
+  "scripts/lib/csv.mjs",
   "scripts/lib/episode-slug.mjs",
   "scripts/lib/env.mjs",
   "scripts/lib/production-command.mjs",
