@@ -17,15 +17,38 @@ const scriptFiles = [
   "scripts/process-voiceover.mjs",
   "scripts/render-episode-final.mjs",
   "scripts/validate-script.mjs",
+  "scripts/auto-produce.mjs",
+  "scripts/record-production-stage.mjs",
   "scripts/lib/body-timings.mjs",
   "scripts/lib/episode-slug.mjs",
   "scripts/lib/env.mjs",
+  "scripts/lib/production-command.mjs",
+  "scripts/lib/production-state.mjs",
+  "scripts/lib/production-artifacts.mjs",
+  "scripts/lib/production-report.mjs",
   "scripts/lib/script-policy.mjs",
   "scripts/lib/script-version.mjs",
   "scripts/lib/title-normalization.mjs",
   "scripts/lib/weread-request.mjs",
   "scripts/tests/test-body-timings.mjs",
+  "scripts/tests/test-env.mjs",
   "scripts/tests/test-title-normalization.mjs",
+  "scripts/tests/test-production-command.mjs",
+  "scripts/tests/test-production-state.mjs",
+  "scripts/tests/test-production-artifacts.mjs",
+  "scripts/tests/test-production-report.mjs",
+  "scripts/tests/test-auto-produce.mjs",
+];
+
+const testFiles = [
+  "scripts/tests/test-title-normalization.mjs",
+  "scripts/tests/test-env.mjs",
+  "scripts/tests/test-body-timings.mjs",
+  "scripts/tests/test-production-command.mjs",
+  "scripts/tests/test-production-state.mjs",
+  "scripts/tests/test-production-artifacts.mjs",
+  "scripts/tests/test-production-report.mjs",
+  "scripts/tests/test-auto-produce.mjs",
 ];
 
 function commandArgs(command) {
@@ -59,12 +82,10 @@ if (
   throw new Error("Default intro book list must contain exactly six books with authors");
 }
 
-const test = run(process.execPath, ["scripts/tests/test-title-normalization.mjs"]);
-if (test.status !== 0) throw new Error(test.stderr || "Title normalization test failed");
-const timingTest = run(process.execPath, ["scripts/tests/test-body-timings.mjs"]);
-if (timingTest.status !== 0) throw new Error(timingTest.stderr || "Body timing test failed");
-const envTest = run(process.execPath, ["scripts/tests/test-env.mjs"]);
-if (envTest.status !== 0) throw new Error(envTest.stderr || "Environment parsing test failed");
+for (const file of testFiles) {
+  const result = run(process.execPath, [file]);
+  if (result.status !== 0) throw new Error(`Test failed: ${file}${result.stderr ? `\n${result.stderr}` : ""}`);
+}
 
 const templateSourceDir = path.join(ROOT, "templates", "shared-video-template", "intro");
 const templateDir = fs.mkdtempSync(path.join(os.tmpdir(), "book-video-hyperframes-check-"));
