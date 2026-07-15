@@ -41,7 +41,7 @@ function loadOrCreate(book, mode, batchId = "") {
 }
 
 function verifyAndReport(book, episodeDir) {
-  const configFile = path.join(process.cwd(), ".book-automation-state.json");
+  const configFile = path.join(process.cwd(), ".book-video-config.json");
   const config = fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, "utf8")) : {};
   const missing = ["jianyingVoice", "lastBgm"].filter((field) => !config[field]);
   if (missing.length) throw new Error(`Missing local configuration: ${missing.join(", ")}`);

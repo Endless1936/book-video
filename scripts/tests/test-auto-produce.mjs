@@ -155,6 +155,14 @@ try {
     jianyingVoice: "自然叙事",
     lastBgm: "如愿.mp3",
   }));
+  const legacyStateConfig = action("resume", verificationBook);
+  assert.equal(legacyStateConfig.status, 1);
+  assert.match(legacyStateConfig.stderr, /jianyingVoice.*lastBgm/s);
+
+  fs.writeFileSync(path.join(root, ".book-video-config.json"), JSON.stringify({
+    jianyingVoice: "自然叙事",
+    lastBgm: "如愿.mp3",
+  }));
   fs.writeFileSync(path.join(verificationEpisode, "renders", "old.mp4"), "video");
   const multipleRenders = action("resume", verificationBook);
   assert.equal(multipleRenders.status, 1);
