@@ -16,6 +16,12 @@ const action = (...args) => run(autoCli, ...args);
 const record = (...args) => run(recordCli, ...args);
 const episodeDir = (book) => path.join(root, "episodes", slugifyEpisodeName(book));
 
+function setCurrentStage(book, currentStage) {
+  const stateFile = path.join(episodeDir(book), "production-state.json");
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  fs.writeFileSync(stateFile, `${JSON.stringify({ ...state, currentStage }, null, 2)}\n`);
+}
+
 try {
   fs.mkdirSync(path.join(root, "episodes"), { recursive: true });
 
@@ -52,6 +58,39 @@ try {
   const scripted = record("我与地坛", "scripted", "success");
   assert.equal(scripted.status, 0, scripted.stderr);
   assert.equal(JSON.parse(action("resume", "我与地坛").stdout).action, "generate_images");
+
+  for (const book of ["有 空格", "单'引号", "分号;书", "$(touch should-not-run)"]) {
+    assert.equal(action("book", book).status, 0);
+    setCurrentStage(book, "voiced");
+    assert.deepEqual(JSON.parse(action("resume", book).stdout).inputs, {
+      executable: "node",
+      args: ["scripts/create-body-timings.mjs", book],
+    });
+    setCurrentStage(book, "timed");
+    assert.deepEqual(JSON.parse(action("resume", book).stdout).inputs, {
+      executable: "node",
+      args: ["scripts/render-episode-final.mjs", book],
+    });
+  }
+
+  const quotedVersionBook = "版本逗号测试";
+  assert.equal(action("book", quotedVersionBook).status, 0);
+  const quotedVersionEpisode = episodeDir(quotedVersionBook);
+  fs.writeFileSync(path.join(quotedVersionEpisode, "brief.json"), JSON.stringify({
+    display_title: quotedVersionBook,
+  }));
+  assert.equal(record(quotedVersionBook, "selected", "success").status, 0);
+  assert.equal(record(quotedVersionBook, "researched", "success").status, 0);
+  fs.writeFileSync(path.join(quotedVersionEpisode, "script.csv"), [
+    "version,order,text,duration_hint",
+    '"A,final",1,有些路只能慢慢走这是一段足够长的测试文本用于验证脚本内容。,10',
+  ].join("\n"));
+  const quotedVersion = record(quotedVersionBook, "scripted", "success");
+  assert.equal(quotedVersion.status, 0, quotedVersion.stderr);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(quotedVersionEpisode, "production-state.json"), "utf8")).activeScriptVersion,
+    "A,final",
+  );
 
   const wrongStage = record("我与地坛", "voiced", "success");
   assert.equal(wrongStage.status, 1);

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import fs from "node:fs";
 import path from "node:path";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { validateStageArtifacts } from "./lib/production-artifacts.mjs";
+import { resolveScriptVersion } from "./lib/script-version.mjs";
 import {
   completeStage,
   failStage,
@@ -10,18 +10,6 @@ import {
   readProductionState,
   writeProductionState,
 } from "./lib/production-state.mjs";
-
-function resolveScriptVersion(episodeDir) {
-  const brief = JSON.parse(fs.readFileSync(path.join(episodeDir, "brief.json"), "utf8"));
-  const fromBrief = brief.activeScriptVersion || brief.scriptVersion || brief.script_version;
-  if (fromBrief) return String(fromBrief);
-  const lines = fs.readFileSync(path.join(episodeDir, "script.csv"), "utf8").trim().split(/\r?\n/u);
-  const headers = (lines.shift() || "").split(",");
-  const versionIndex = headers.indexOf("version");
-  const firstRow = (lines.find(Boolean) || "").split(",");
-  if (versionIndex < 0 || !firstRow[versionIndex]) throw new Error("Unable to resolve active script version");
-  return firstRow[versionIndex];
-}
 
 try {
   const [book, stage, outcome, ...messageParts] = process.argv.slice(2);

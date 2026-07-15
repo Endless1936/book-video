@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parseCsvLine } from "./csv.mjs";
 
 export function resolveScriptVersion(episodeDir, requestedVersion = "") {
   if (requestedVersion) return requestedVersion;
@@ -7,7 +8,8 @@ export function resolveScriptVersion(episodeDir, requestedVersion = "") {
   const briefPath = path.join(episodeDir, "brief.json");
   if (fs.existsSync(briefPath)) {
     const brief = JSON.parse(fs.readFileSync(briefPath, "utf8"));
-    if (brief.scriptVersion) return String(brief.scriptVersion);
+    const version = brief.activeScriptVersion || brief.scriptVersion || brief.script_version;
+    if (version) return String(version);
   }
 
   const scriptPath = path.join(episodeDir, "script.csv");
@@ -18,7 +20,7 @@ export function resolveScriptVersion(episodeDir, requestedVersion = "") {
         .split(/\r?\n/u)
         .slice(1)
         .filter(Boolean)
-        .map((line) => line.split(",", 1)[0].replace(/^"|"$/gu, ""))
+        .map((line) => parseCsvLine(line)[0])
         .filter(Boolean),
     );
     if (versions.size === 1) return [...versions][0];

@@ -19,8 +19,8 @@ const ACTIONS = {
     "images/atmosphere-2.png", "images/atmosphere-3.png",
   ] },
   voiced: { action: "generate_jianying_voiceover", expectedOutputs: ["audio/body-voiceover.mp3"] },
-  timed: { action: "run_command", inputs: { command: "node scripts/create-body-timings.mjs <book>" }, expectedOutputs: ["audio/body-timings.json"] },
-  rendered: { action: "run_command", inputs: { command: "node scripts/render-episode-final.mjs <book>" }, expectedOutputs: ["renders/*.mp4"] },
+  timed: { action: "run_command", script: "scripts/create-body-timings.mjs", expectedOutputs: ["audio/body-timings.json"] },
+  rendered: { action: "run_command", script: "scripts/render-episode-final.mjs", expectedOutputs: ["renders/*.mp4"] },
   verified: { action: "verify_and_report", expectedOutputs: ["production-report.json"] },
 };
 
@@ -44,8 +44,9 @@ function emitBookAction(book, mode, batchId = "") {
     return { status: "complete", book, stage: null, action: null, inputs: {}, expectedOutputs: [] };
   }
   const definition = ACTIONS[stage];
-  const inputs = { ...(definition.inputs || {}) };
-  if (inputs.command) inputs.command = inputs.command.replace("<book>", book);
+  const inputs = definition.script
+    ? { executable: "node", args: [definition.script, book] }
+    : { ...(definition.inputs || {}) };
   return {
     status: "action_required",
     book,

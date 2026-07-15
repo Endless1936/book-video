@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 .book-automation-state.json
+.book-video-batches/
 .uploads/
 
 # Local candidate data
