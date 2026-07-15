@@ -31,7 +31,7 @@ Copyright (c) 2026 prototech, endless, and 未济.
 
 第一次制作时，Codex 会在剪映中选择一个自然、克制的普通话叙事音色，并把选择保存在本地 `.book-video-config.json` 中；之后的制作会自动复用它。如果界面或运行中断，再次要求 Codex 继续即可：它会读取 `episodes/<书名>/production-state.json` ，从下一个未完成阶段恢复，而不是重做已成功的步骤。
 
-首次全自动运行前必须完成真实的剪映 Unicode 文本提交与 MP3 导出冒烟测试，并在 `jianyingCapability` 中记录成功状态。当前环境尚未完成该实机测试，因此仍处于阻塞状态；仓库测试通过不代表剪映导出或最终 MP4 已交付成功。
+首次进入配音阶段前必须完成真实的剪映 Unicode 文本提交与 MP3 导出冒烟测试，并将 `jianyingCapability.unicodeCommitAndExport` 记录为 `true`。在配音前恢复会被阻止，已经越过配音阶段的任务仍可继续。当前环境尚未完成该实机测试，因此仍处于阻塞状态；仓库测试通过不代表剪映导出或最终 MP4 已交付成功。
 
 `.book-video-config.json` 统一包含 `jianyingVoice`、`jianyingApp`、`jianyingExportDir`、`lastBgm`、默认主题/受众/BGM 策略、自动选书排除策略、`stageTimeoutMs`、逐阶段 `stageRetryLimit` 和 `jianyingCapability`。所有字段在使用前校验。
 

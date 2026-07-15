@@ -24,9 +24,9 @@ try {
   assert.deepEqual(readBatchState(root, "batch-1"), created);
 
   assert.equal(DEFAULT_CONFIG.stageRetryLimit.voiced, 3);
-  assert.equal(validateConfig({ ...DEFAULT_CONFIG, jianyingCapability: { unicodeTextCommit: true, export: true, smokeTestedAt: "2026-01-01T00:00:00Z" } }).jianyingApp.length > 0, true);
+  assert.equal(validateConfig({ ...DEFAULT_CONFIG, jianyingCapability: { unicodeCommitAndExport: true, smokeTestedAt: "2026-01-01T00:00:00Z" } }).jianyingApp.length > 0, true);
   assert.throws(() => validateConfig({ ...DEFAULT_CONFIG, stageTimeoutMs: -1 }), /stageTimeoutMs/);
-  assert.throws(() => validateConfig({ ...DEFAULT_CONFIG, jianyingCapability: { unicodeTextCommit: false, export: true } }, { requireCapability: true }), /capability probe/i);
+  assert.throws(() => validateConfig({ ...DEFAULT_CONFIG, jianyingCapability: { unicodeCommitAndExport: false } }, { requireCapability: true }), /capability probe/i);
 
   let state = createProductionState({ book: "甲", mode: "book" });
   state = { ...state, currentStage: "illustrated" };
@@ -49,6 +49,14 @@ try {
   fs.writeFileSync(path.join(episode, "prompts.csv"), "name,prompt\nresult-bridge.png,桥接\n");
   for (const name of ["result-bridge.png", "atmosphere-1.png", "atmosphere-2.png", "atmosphere-3.png"]) fs.writeFileSync(path.join(episode, "images", name), Buffer.alloc(2048));
   assert.match(validateStageArtifacts("illustrated", episode, "", { probeMedia: () => ({ ok: false, reason: "not decodable" }) }).join("\n"), /not decodable/);
+  const validNames = ["result-bridge.png", "atmosphere-1.png", "atmosphere-2.png", "atmosphere-3.png"];
+  const promptErrors = (csv) => { fs.writeFileSync(path.join(episode, "prompts.csv"), csv); return validateStageArtifacts("illustrated", episode, "", { probeMedia: () => ({ ok: true }) }).join("\n"); };
+  assert.match(promptErrors("name,prompt\nresult-bridge.png,桥接\n"), /missing.*atmosphere-1/i);
+  assert.match(promptErrors(`name,prompt\n${validNames.map((name) => `${name},x`).join("\n")}\nresult-bridge.png,again\n`), /duplicate.*result-bridge/i);
+  assert.match(promptErrors(`name,prompt\n${validNames.map((name) => `${name},${name === "atmosphere-2.png" ? "" : "x"}`).join("\n")}\n`), /empty prompt.*atmosphere-2/i);
+  fs.writeFileSync(path.join(episode, "images", "extra.png"), "x");
+  assert.match(promptErrors(`name,prompt\n${validNames.map((name) => `${name},x`).join("\n")}\n`), /unexpected image.*extra.png/i);
+  fs.rmSync(path.join(episode, "images", "extra.png"));
   assert.match(validateRenderedArtifact(episode, () => ({ ok: false, reason: "corrupt" })).join("\n"), /exactly one MP4/);
   fs.mkdirSync(path.join(episode, "renders"));
   fs.writeFileSync(path.join(episode, "renders", "zero.mp4"), "");

@@ -25,8 +25,34 @@ function setCurrentStage(book, currentStage) {
 try {
   fs.mkdirSync(path.join(root, "episodes"), { recursive: true });
   fs.writeFileSync(path.join(root, ".book-video-config.json"), JSON.stringify({
-    jianyingCapability: { unicodeTextCommit: true, export: true, smokeTestedAt: "test-fixture" },
+    jianyingCapability: { unicodeCommitAndExport: true, smokeTestedAt: "test-fixture" },
   }));
+
+  for (const [book, currentStage, failureStage] of [["终止普通", "selected", "researched"], ["终止配音", "illustrated", "voiced"], ["终止验收", "rendered", "verified"]]) {
+    assert.equal(action("book", book).status, 0);
+    const stateFile = path.join(episodeDir(book), "production-state.json");
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    fs.writeFileSync(stateFile, JSON.stringify({ ...state, currentStage, failure: { stage: failureStage, message: "terminal", attempts: 3, failedAt: "2026-01-01T00:00:00Z" }, attempts: {} }));
+    if (failureStage === "verified") fs.writeFileSync(path.join(episodeDir(book), "production-report.json"), "keep");
+    const terminal = action("resume", book);
+    assert.equal(terminal.status, 0, terminal.stderr);
+    assert.equal(JSON.parse(terminal.stdout).status, "terminal_failure");
+    const unchanged = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(unchanged.failure.attempts, 3);
+    if (failureStage === "voiced") assert.deepEqual(unchanged.attempts, {});
+    if (failureStage === "verified") assert.equal(fs.readFileSync(path.join(episodeDir(book), "production-report.json"), "utf8"), "keep");
+  }
+
+  const capabilityBook = "能力门";
+  assert.equal(action("book", capabilityBook).status, 0);
+  setCurrentStage(capabilityBook, "illustrated");
+  fs.writeFileSync(path.join(root, ".book-video-config.json"), JSON.stringify({ jianyingCapability: { unicodeCommitAndExport: false } }));
+  const blockedVoice = action("resume", capabilityBook);
+  assert.equal(blockedVoice.status, 1);
+  assert.match(blockedVoice.stderr, /capability probe/i);
+  setCurrentStage(capabilityBook, "voiced");
+  assert.equal(action("resume", capabilityBook).status, 0);
+  fs.writeFileSync(path.join(root, ".book-video-config.json"), JSON.stringify({ jianyingCapability: { unicodeCommitAndExport: true, smokeTestedAt: "test-fixture" } }));
 
   const first = action("book", "我与地坛");
   assert.equal(first.status, 0, first.stderr);
@@ -111,7 +137,18 @@ try {
   assert.equal(record("活着", "selected", "failure", "终止处理").status, 0);
   const batch = action("batch", "活着", "悉达多");
   assert.equal(batch.status, 0, batch.stderr);
-  assert.equal(JSON.parse(batch.stdout).book, "悉达多");
+  const batchAction = JSON.parse(batch.stdout);
+  assert.equal(batchAction.book, "悉达多");
+  assert.equal(batchAction.continueWith.args.at(-1), batchAction.batchId);
+  setCurrentStage("悉达多", "verified");
+  const batchSummaryRun = action("batch", "--resume", batchAction.batchId);
+  assert.equal(batchSummaryRun.status, 0, batchSummaryRun.stderr);
+  const batchSummary = JSON.parse(batchSummaryRun.stdout);
+  assert.equal(batchSummary.batchId, batchAction.batchId);
+  assert.equal(batchSummary.status, "complete");
+  assert.deepEqual(batchSummary.items.map(({ book, status }) => ({ book, status })), [
+    { book: "活着", status: "failure" }, { book: "悉达多", status: "success" },
+  ]);
 
   const auto = action("auto", "--theme", "孤独与成长");
   assert.equal(auto.status, 0, auto.stderr);
@@ -137,7 +174,7 @@ try {
     "A,1,有些路只能慢慢走这是一段足够长的测试文本用于验证脚本内容。,10",
   ].join("\n"));
   fs.mkdirSync(path.join(verificationEpisode, "images"), { recursive: true });
-  fs.writeFileSync(path.join(verificationEpisode, "prompts.csv"), "name,prompt\nresult-bridge.png,桥接\n");
+  fs.writeFileSync(path.join(verificationEpisode, "prompts.csv"), "name,prompt\nresult-bridge.png,桥接\natmosphere-1.png,一\natmosphere-2.png,二\natmosphere-3.png,三\n");
   for (const name of ["result-bridge.png", "atmosphere-1.png", "atmosphere-2.png", "atmosphere-3.png"]) {
     const madeImage = spawnSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=black:s=16x16", "-frames:v", "1", "-y", path.join(verificationEpisode, "images", name)], { encoding: "utf8" });
     assert.equal(madeImage.status, 0, madeImage.stderr);
@@ -188,6 +225,8 @@ try {
   assert.match(multipleRenders.stderr, /exactly one active MP4/);
   assert.equal(fs.existsSync(path.join(verificationEpisode, "production-report.json")), false);
   fs.rmSync(path.join(verificationEpisode, "renders", "old.mp4"));
+  const preProbeState = JSON.parse(fs.readFileSync(verificationStateFile, "utf8"));
+  fs.writeFileSync(verificationStateFile, JSON.stringify({ ...preProbeState, failure: null }));
 
   const missingFfprobe = spawnSync(process.execPath, [autoCli, "resume", verificationBook], {
     cwd: root,

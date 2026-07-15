@@ -24,7 +24,7 @@ try {
   assert.deepEqual(validateStageArtifacts("scripted", episode, "A"), []);
   assert.match(validateStageArtifacts("illustrated", episode, "A")[0], /prompts\.csv/);
 
-  fs.writeFileSync(path.join(episode, "prompts.csv"), "name,prompt\nresult-bridge.png,桥接\n");
+  fs.writeFileSync(path.join(episode, "prompts.csv"), "name,prompt\nresult-bridge.png,桥接\natmosphere-1.png,一\natmosphere-2.png,二\natmosphere-3.png,三\n");
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
   for (const name of ["result-bridge.png", "atmosphere-1.png", "atmosphere-2.png", "atmosphere-3.png"]) {
     fs.mkdirSync(path.join(episode, "images"), { recursive: true });

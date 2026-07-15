@@ -100,6 +100,12 @@ function emitBookAction(book, mode, batchId = "") {
   if (stage === null) {
     return { status: "complete", book, stage: null, action: null, inputs: {}, expectedOutputs: [] };
   }
+  const config = readProductionConfig(process.cwd());
+  const retryLimit = config.stageRetryLimit[stage];
+  if (state.failure?.stage === stage && isTerminalFailure(state, retryLimit)) {
+    return { status: "terminal_failure", book, stage, action: null, inputs: {}, expectedOutputs: [], attempts: state.failure.attempts, retryLimit, failedStage: stage, resumeRecommendation: `Resolve ${stage} failure before resetting its attempts` };
+  }
+  if (stage === "voiced") readProductionConfig(process.cwd(), { requireCapability: true });
   const definition = ACTIONS[stage];
   if (stage === "voiced") {
     state = startStageAttempt(state, stage);
@@ -161,7 +167,6 @@ function emitBatch(books, resumeBatchId = "") {
 
 try {
   const command = parseProductionCommand(process.argv.slice(2));
-  if (["book", "auto", "batch"].includes(command.mode)) readProductionConfig(process.cwd(), { requireCapability: true });
   let output;
   if (command.mode === "auto") {
     output = {

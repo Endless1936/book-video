@@ -98,8 +98,24 @@ export function validateStageArtifacts(stage, episodeDir, version, { attemptStar
   if (STAGES_WITH_IMAGES.includes(stage)) {
     if (requireFile("prompts.csv")) {
       const lines = fs.readFileSync(path.join(episodeDir, "prompts.csv"), "utf8").trim().split(/\r?\n/u);
-      if (lines.length < 2 || !lines[0].includes(",")) errors.push("prompts.csv is malformed");
+      const headers = parseCsvLine(lines.shift() || "").map((value) => value.trim());
+      const nameIndex = headers.indexOf("name"); const promptIndex = headers.indexOf("prompt");
+      if (nameIndex < 0 || promptIndex < 0) errors.push("prompts.csv requires name and prompt columns");
+      else {
+        const counts = new Map(REQUIRED_IMAGES.map((name) => [name, 0]));
+        for (const line of lines.filter(Boolean)) {
+          const values = parseCsvLine(line); const name = (values[nameIndex] || "").trim(); const prompt = (values[promptIndex] || "").trim();
+          if (!counts.has(name)) errors.push(`prompts.csv has unexpected image name: ${name || "<empty>"}`);
+          else { counts.set(name, counts.get(name) + 1); if (!prompt) errors.push(`prompts.csv has empty prompt for ${name}`); }
+        }
+        for (const [name, count] of counts) {
+          if (count === 0) errors.push(`prompts.csv missing ${name}`);
+          else if (count > 1) errors.push(`prompts.csv duplicate ${name}`);
+        }
+      }
     }
+    const bitmapNames = fs.existsSync(path.join(episodeDir, "images")) ? fs.readdirSync(path.join(episodeDir, "images")).filter((name) => /\.(?:png|jpe?g|webp)$/iu.test(name)) : [];
+    for (const name of bitmapNames) if (!REQUIRED_IMAGES.includes(name)) errors.push(`Unexpected image bitmap: ${name}`);
     for (const name of REQUIRED_IMAGES) {
       const relative = `images/${name}`;
       if (requireFile(relative)) {
