@@ -27,6 +27,7 @@ episodes/*/ui-failures/
 skills-lock.json
 tmp/
 docs/superpowers/
+.superpowers/
 .worktrees/
 
 # Dependencies and build output
