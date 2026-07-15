@@ -31,6 +31,10 @@ Copyright (c) 2026 prototech, endless, and 未济.
 
 第一次制作时，Codex 会在剪映中选择一个自然、克制的普通话叙事音色，并把选择保存在本地 `.book-video-config.json` 中；之后的制作会自动复用它。如果界面或运行中断，再次要求 Codex 继续即可：它会读取 `episodes/<书名>/production-state.json` ，从下一个未完成阶段恢复，而不是重做已成功的步骤。
 
+首次全自动运行前必须完成真实的剪映 Unicode 文本提交与 MP3 导出冒烟测试，并在 `jianyingCapability` 中记录成功状态。当前环境尚未完成该实机测试，因此仍处于阻塞状态；仓库测试通过不代表剪映导出或最终 MP4 已交付成功。
+
+`.book-video-config.json` 统一包含 `jianyingVoice`、`jianyingApp`、`jianyingExportDir`、`lastBgm`、默认主题/受众/BGM 策略、自动选书排除策略、`stageTimeoutMs`、逐阶段 `stageRetryLimit` 和 `jianyingCapability`。所有字段在使用前校验。
+
 ### 命令行入口
 
 以下命令主要用于调试或与 Codex 协作：
@@ -39,10 +43,15 @@ Copyright (c) 2026 prototech, endless, and 未济.
 node scripts/auto-produce.mjs book "我与地坛"
 node scripts/auto-produce.mjs auto --theme "孤独与自我成长"
 node scripts/auto-produce.mjs batch "我与地坛" "人间草木"
+node scripts/auto-produce.mjs batch --resume "<batch-id>"
 node scripts/auto-produce.mjs resume "我与地坛"
 ```
 
 独立运行 CLI 只会输出 JSON Agent action，其中命令动作使用结构化的 `inputs: { executable, args }`；它不会自己操作剪映或生成图片。完整自动化由 Codex 解析这些动作，用内置位图生成能力制作氛围图，并通过 Codex Computer Use 操作剪映界面。Node.js 不会也不应直接控制剪映。每个动作成功后，Agent 会用 `scripts/record-production-stage.mjs` 记录阶段，再调用 `resume` 继续。
+
+批次状态原子写入 `.book-video-batches/<batch-id>.json`，保存书单顺序、当前位置、逐书结果和时间戳。输出携带同一个 `batchId` 和结构化续跑参数；成功或达到重试上限的终止失败都会推进到下一本，最终摘要列出全部书籍、失败阶段和续跑建议。
+
+阶段门会解析书目信息和提示词、解码四张规定名称的位图、验证配音晚于本次尝试且含正时长音轨，并要求渲染目录恰有一个非空且含视频流的可读 MP4。最终报告记录字幕数、必需图片数，以及片头口播、正文口播、BGM 和齿轮音效检查结果。
 
 你也可以直接用自然语言操作，例如：
 

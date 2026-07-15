@@ -5,12 +5,17 @@ import { spawnSync } from "node:child_process";
 import { parseProductionCommand } from "./lib/production-command.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { buildProductionReport, writeProductionReport } from "./lib/production-report.mjs";
+import { readActiveScript } from "./lib/production-artifacts.mjs";
+import { readProductionConfig } from "./lib/production-config.mjs";
+import { advanceBatch, createBatchState, readBatchState, summarizeBatch, writeBatchState } from "./lib/batch-state.mjs";
 import {
   createProductionState,
   failStage,
   nextStage,
   readProductionState,
   writeProductionState,
+  isTerminalFailure,
+  startStageAttempt,
 } from "./lib/production-state.mjs";
 
 const ACTIONS = {
@@ -41,8 +46,7 @@ function loadOrCreate(book, mode, batchId = "") {
 }
 
 function verifyAndReport(book, episodeDir) {
-  const configFile = path.join(process.cwd(), ".book-video-config.json");
-  const config = fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, "utf8")) : {};
+  const config = readProductionConfig(process.cwd());
   const missing = ["jianyingVoice", "lastBgm"].filter((field) => !config[field]);
   if (missing.length) throw new Error(`Missing local configuration: ${missing.join(", ")}`);
 
@@ -70,6 +74,14 @@ function verifyAndReport(book, episodeDir) {
     bgm: config.lastBgm,
     output: relativeRender,
     probe,
+    subtitleCount: readActiveScript(episodeDir, readProductionState(episodeDir).activeScriptVersion).length,
+    requiredImageCount: ["result-bridge.png", "atmosphere-1.png", "atmosphere-2.png", "atmosphere-3.png"].filter((name) => fs.existsSync(path.join(episodeDir, "images", name))).length,
+    enforcedAudio: {
+      introVoice: fs.existsSync(path.join(process.cwd(), "assets", "template-audio", "intro-voiceover.mp3")),
+      bodyVoice: fs.existsSync(path.join(episodeDir, "audio", "body-voiceover.mp3")),
+      bgm: fs.existsSync(path.join(process.cwd(), "assets", "bgm", config.lastBgm)),
+      gearSfx: fs.existsSync(path.join(process.cwd(), "assets", "sfx", "gear-scroll.mp3")),
+    },
   });
   writeProductionReport(episodeDir, report);
   return {
@@ -83,12 +95,16 @@ function verifyAndReport(book, episodeDir) {
 }
 
 function emitBookAction(book, mode, batchId = "") {
-  const state = loadOrCreate(book, mode, batchId);
+  let state = loadOrCreate(book, mode, batchId);
   const stage = nextStage(state);
   if (stage === null) {
     return { status: "complete", book, stage: null, action: null, inputs: {}, expectedOutputs: [] };
   }
   const definition = ACTIONS[stage];
+  if (stage === "voiced") {
+    state = startStageAttempt(state, stage);
+    writeProductionState(episodeDirectory(book), state);
+  }
   if (definition.action === "verify_and_report") {
     const episodeDir = episodeDirectory(book);
     try {
@@ -119,21 +135,33 @@ function emitBookAction(book, mode, batchId = "") {
   };
 }
 
-function emitBatch(books) {
-  const batchId = new Date().toISOString().replace(/[:.]/gu, "-");
+function emitBatch(books, resumeBatchId = "") {
   const batchDirectory = path.join(process.cwd(), ".book-video-batches");
-  fs.mkdirSync(batchDirectory, { recursive: true });
-  fs.writeFileSync(path.join(batchDirectory, `${batchId}.json`), `${JSON.stringify({ batchId, books }, null, 2)}\n`);
-  for (const book of books) {
-    const state = loadOrCreate(book, "batch", batchId);
-    if (state.failure || nextStage(state) === null) continue;
-    return emitBookAction(book, "batch", batchId);
+  let batch;
+  if (resumeBatchId) batch = readBatchState(batchDirectory, resumeBatchId);
+  else {
+    const batchId = `${Date.now()}-${process.pid}`;
+    batch = createBatchState(books, batchId);
+    writeBatchState(batchDirectory, batch);
   }
-  return { status: "complete", book: "", stage: null, action: null, inputs: {}, expectedOutputs: [] };
+  const config = readProductionConfig(process.cwd());
+  while (batch.currentPosition < batch.items.length) {
+    const item = batch.items[batch.currentPosition];
+    const state = loadOrCreate(item.book, "batch", batch.batchId);
+    if (nextStage(state) === null) batch = advanceBatch(batch, { status: "success", failedStage: null, resumeRecommendation: "" });
+    else if (isTerminalFailure(state, config.stageRetryLimit[state.failure?.stage] || 1)) batch = advanceBatch(batch, { status: "failure", failedStage: state.failure.stage, resumeRecommendation: `node scripts/auto-produce.mjs resume ${JSON.stringify(item.book)}` });
+    else {
+      writeBatchState(batchDirectory, batch);
+      return { ...emitBookAction(item.book, "batch", batch.batchId), batchId: batch.batchId, continueWith: { executable: process.execPath, args: ["scripts/auto-produce.mjs", "batch", "--resume", batch.batchId] } };
+    }
+  }
+  writeBatchState(batchDirectory, batch);
+  return { ...summarizeBatch(batch), book: "", stage: null, action: null, inputs: {}, expectedOutputs: [] };
 }
 
 try {
   const command = parseProductionCommand(process.argv.slice(2));
+  if (["book", "auto", "batch"].includes(command.mode)) readProductionConfig(process.cwd(), { requireCapability: true });
   let output;
   if (command.mode === "auto") {
     output = {
@@ -145,7 +173,7 @@ try {
       expectedOutputs: ["data/book-pipeline.csv"],
     };
   } else if (command.mode === "batch") {
-    output = emitBatch(command.books);
+    output = emitBatch(command.books, command.batchId);
   } else {
     output = emitBookAction(command.books[0], command.mode);
   }

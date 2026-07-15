@@ -14,6 +14,10 @@ export function parseProductionCommand(args) {
     if (!rest[1] || rest.length !== 2) usage("--theme requires a value");
     return { mode, books: [], theme: rest[1].trim() };
   }
+  if (mode === "batch" && rest[0] === "--resume") {
+    if (rest.length !== 2 || !rest[1].trim()) usage("batch --resume requires a batch ID");
+    return { mode, books: [], theme: "", batchId: rest[1].trim() };
+  }
   const books = rest.map((item) => item.trim()).filter(Boolean);
   if ((mode === "book" || mode === "resume") && books.length !== 1) {
     usage(`${mode} requires exactly one book`);

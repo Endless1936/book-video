@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export function buildProductionReport({ book, voice, bgm, output, probe, now = new Date().toISOString() }) {
+export function buildProductionReport({ book, voice, bgm, output, probe, subtitleCount, requiredImageCount, enforcedAudio, now = new Date().toISOString() }) {
   const video = probe.streams?.find((stream) => stream.codec_type === "video");
   const audio = probe.streams?.find((stream) => stream.codec_type === "audio");
   const duration = Number(probe.format?.duration || 0);
@@ -12,6 +12,9 @@ export function buildProductionReport({ book, voice, bgm, output, probe, now = n
   if (fps !== 30) errors.push("video must be 30fps");
   if (!audio || audio.codec_name !== "aac") errors.push("audio codec must be aac");
   if (!Number.isFinite(duration) || duration <= 0 || duration > 60.05) errors.push("duration must be at most 60 seconds");
+  if (subtitleCount !== undefined && (!Number.isInteger(subtitleCount) || subtitleCount < 1)) errors.push("subtitleCount must be positive");
+  if (requiredImageCount !== undefined && requiredImageCount !== 4) errors.push("requiredImageCount must be 4");
+  if (enforcedAudio !== undefined) for (const name of ["introVoice", "bodyVoice", "bgm", "gearSfx"]) if (enforcedAudio[name] !== true) errors.push(`${name} audio is required`);
   if (errors.length) throw new Error(errors.join("; "));
   return {
     schemaVersion: 1,
@@ -26,6 +29,9 @@ export function buildProductionReport({ book, voice, bgm, output, probe, now = n
     videoCodec: "h264",
     audioCodec: "aac",
     verified: true,
+    ...(subtitleCount === undefined ? {} : { subtitleCount }),
+    ...(requiredImageCount === undefined ? {} : { requiredImageCount }),
+    ...(enforcedAudio === undefined ? {} : { enforcedAudio }),
     verifiedAt: now,
   };
 }

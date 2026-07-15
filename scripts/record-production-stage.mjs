@@ -4,12 +4,14 @@ import path from "node:path";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { validateStageArtifacts } from "./lib/production-artifacts.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
+import { readProductionConfig } from "./lib/production-config.mjs";
 import {
   completeStage,
   failStage,
   nextStage,
   readProductionState,
   writeProductionState,
+  isTerminalFailure,
 } from "./lib/production-state.mjs";
 
 try {
@@ -44,12 +46,14 @@ try {
     const activeScriptVersion = stage === "scripted"
       ? resolveScriptVersion(episodeDir)
       : state.activeScriptVersion;
-    const errors = validateStageArtifacts(stage, episodeDir, activeScriptVersion);
+    const errors = validateStageArtifacts(stage, episodeDir, activeScriptVersion, { attemptStartedAt: state.attempts?.voiced?.startedAt || "" });
     if (errors.length) throw new Error(errors.join("; "));
     updated = completeStage(state, stage, new Date().toISOString(), stage === "scripted" ? { activeScriptVersion } : {});
   }
   writeProductionState(episodeDir, updated);
-  process.stdout.write(`${JSON.stringify({ status: outcome, book, stage })}\n`);
+  const limit = readProductionConfig(process.cwd()).stageRetryLimit[stage];
+  const terminal = outcome === "failure" && isTerminalFailure(updated, limit);
+  process.stdout.write(`${JSON.stringify({ status: terminal ? "terminal_failure" : outcome, book, stage, attempts: updated.failure?.attempts || 0, retryLimit: limit })}\n`);
 } catch (error) {
   process.stderr.write(`${error.message}\n`);
   process.exitCode = 1;

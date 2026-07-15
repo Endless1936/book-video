@@ -55,9 +55,15 @@ Use WeChat Reading for research when it is configured and public research otherw
 
 Before starting the Jianying export, record the task start time. Accept only an MP3 created after that time, at least 1 KB, and with a positive duration reported by `ffprobe`. Store the selected voice in local `.book-video-config.json`. Reuse it on later runs; if it is absent, choose a natural, restrained Mandarin narrative voice once and update the config.
 
+Before any fully automatic `book`, `auto`, or `batch` start, validate the complete `.book-video-config.json` schema and require a real successful `jianyingCapability` probe for Unicode text commit and export. Never fabricate this status. The current environment remains blocked until that real smoke test passes; repository checks alone are not evidence of a delivered MP4.
+
 If UI operation fails, save a screenshot under `episodes/<book>/ui-failures/`, record the stage failure through `failStage()` (via `record-production-stage.mjs ... failure`), and retry no more than the configured limit. For `verify_and_report`, inspect representative extracted frames for blank frames, placeholder text, and subtitle overflow. Write explicit boolean results to `production-report.json.visualChecks.blankFrames`, `.placeholderText`, and `.subtitleOverflow` before recording `verified` success; all three must be `true`, and any `false` blocks completion.
 
 In batch mode, a terminal failure for one book must not stop the remaining books. Continue with the next book and include every success and failure in the final batch summary.
+
+Resume a batch with the emitted structured `batch --resume <batch-id>` arguments; never create a replacement batch. The atomic batch state is authoritative for order, position, results, timestamps, failed stage, and resume recommendation. A failure becomes terminal when persisted attempts reach that stage's configured limit. External research, bitmap generation, Jianying UI work, and visual inspection remain Codex actions, not standalone Node.js capabilities.
+
+Artifact gates parse `brief.json` and `prompts.csv`, decode the four required named images, probe the attempt-new MP3, and require exactly one non-empty probed MP4 with a video stream. The report must state subtitle and image counts plus intro voice, body voice, BGM, and gear SFX results.
 
 ## Visual And Audio Rules
 

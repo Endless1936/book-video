@@ -18,9 +18,19 @@ export function createProductionState({ book, mode, batchId = "", now = new Date
     activeScriptVersion: "",
     completedAt: {},
     failure: null,
+    attempts: {},
     createdAt: now,
     updatedAt: now,
   };
+}
+
+export function startStageAttempt(state, stage, now = new Date().toISOString()) {
+  if (stage !== nextStage(state)) throw new Error(`Expected ${nextStage(state)}, received ${stage}`);
+  return { ...state, attempts: { ...state.attempts, [stage]: { startedAt: now } }, updatedAt: now };
+}
+
+export function isTerminalFailure(state, limit) {
+  return Boolean(state.failure && state.failure.attempts >= limit);
 }
 
 export function nextStage(state) {

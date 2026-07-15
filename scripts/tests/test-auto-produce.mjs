@@ -24,6 +24,9 @@ function setCurrentStage(book, currentStage) {
 
 try {
   fs.mkdirSync(path.join(root, "episodes"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".book-video-config.json"), JSON.stringify({
+    jianyingCapability: { unicodeTextCommit: true, export: true, smokeTestedAt: "test-fixture" },
+  }));
 
   const first = action("book", "我与地坛");
   assert.equal(first.status, 0, first.stderr);
@@ -44,6 +47,9 @@ try {
 
   fs.writeFileSync(path.join(episode, "brief.json"), JSON.stringify({
     display_title: "我与地坛",
+    author: "史铁生",
+    source_channel: "public",
+    edition_status: "confirmed",
     scriptVersion: "A",
   }));
   assert.equal(record("我与地坛", "selected", "success").status, 0);
@@ -78,6 +84,9 @@ try {
   const quotedVersionEpisode = episodeDir(quotedVersionBook);
   fs.writeFileSync(path.join(quotedVersionEpisode, "brief.json"), JSON.stringify({
     display_title: quotedVersionBook,
+    author: "测试作者",
+    source_channel: "public",
+    edition_status: "confirmed",
   }));
   assert.equal(record(quotedVersionBook, "selected", "success").status, 0);
   assert.equal(record(quotedVersionBook, "researched", "success").status, 0);
@@ -97,6 +106,8 @@ try {
   assert.match(wrongStage.stderr, /Expected illustrated/);
 
   assert.equal(action("book", "活着").status, 0);
+  assert.equal(record("活着", "selected", "failure", "终止处理").status, 0);
+  assert.equal(record("活着", "selected", "failure", "终止处理").status, 0);
   assert.equal(record("活着", "selected", "failure", "终止处理").status, 0);
   const batch = action("batch", "活着", "悉达多");
   assert.equal(batch.status, 0, batch.stderr);
@@ -119,21 +130,25 @@ try {
   setCurrentStage(verificationBook, "rendered");
   const verificationStateFile = path.join(verificationEpisode, "production-state.json");
   const verificationState = JSON.parse(fs.readFileSync(verificationStateFile, "utf8"));
-  fs.writeFileSync(verificationStateFile, `${JSON.stringify({ ...verificationState, activeScriptVersion: "A" }, null, 2)}\n`);
-  fs.writeFileSync(path.join(verificationEpisode, "brief.json"), JSON.stringify({ display_title: verificationBook }));
+  fs.writeFileSync(verificationStateFile, `${JSON.stringify({ ...verificationState, activeScriptVersion: "A", attempts: { voiced: { startedAt: "2000-01-01T00:00:00.000Z" } } }, null, 2)}\n`);
+  fs.writeFileSync(path.join(verificationEpisode, "brief.json"), JSON.stringify({ display_title: verificationBook, author: "测试作者", source_channel: "public", edition_status: "confirmed" }));
   fs.writeFileSync(path.join(verificationEpisode, "script.csv"), [
     "version,order,text,duration_hint",
     "A,1,有些路只能慢慢走这是一段足够长的测试文本用于验证脚本内容。,10",
   ].join("\n"));
   fs.mkdirSync(path.join(verificationEpisode, "images"), { recursive: true });
+  fs.writeFileSync(path.join(verificationEpisode, "prompts.csv"), "name,prompt\nresult-bridge.png,桥接\n");
   for (const name of ["result-bridge.png", "atmosphere-1.png", "atmosphere-2.png", "atmosphere-3.png"]) {
-    fs.writeFileSync(path.join(verificationEpisode, "images", name), Buffer.alloc(1024));
+    const madeImage = spawnSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=black:s=16x16", "-frames:v", "1", "-y", path.join(verificationEpisode, "images", name)], { encoding: "utf8" });
+    assert.equal(madeImage.status, 0, madeImage.stderr);
   }
   fs.mkdirSync(path.join(verificationEpisode, "audio"), { recursive: true });
-  fs.writeFileSync(path.join(verificationEpisode, "audio", "body-voiceover.mp3"), Buffer.alloc(1024));
+  const madeAudio = spawnSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-y", path.join(verificationEpisode, "audio", "body-voiceover.mp3")], { encoding: "utf8" });
+  assert.equal(madeAudio.status, 0, madeAudio.stderr);
   fs.writeFileSync(path.join(verificationEpisode, "audio", "body-timings.json"), "{}\n");
   fs.mkdirSync(path.join(verificationEpisode, "renders"), { recursive: true });
-  fs.writeFileSync(path.join(verificationEpisode, "renders", "final.mp4"), "video");
+  const madeVideo = spawnSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=black:s=720x960:d=1:r=30", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-shortest", "-c:v", "libx264", "-c:a", "aac", "-y", path.join(verificationEpisode, "renders", "final.mp4")], { encoding: "utf8" });
+  assert.equal(madeVideo.status, 0, madeVideo.stderr);
 
   const staleReport = {
     verified: true,
@@ -163,6 +178,10 @@ try {
     jianyingVoice: "自然叙事",
     lastBgm: "如愿.mp3",
   }));
+  for (const relative of ["assets/template-audio/intro-voiceover.mp3", "assets/bgm/如愿.mp3", "assets/sfx/gear-scroll.mp3"]) {
+    fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+    fs.writeFileSync(path.join(root, relative), "fixture");
+  }
   fs.writeFileSync(path.join(verificationEpisode, "renders", "old.mp4"), "video");
   const multipleRenders = action("resume", verificationBook);
   assert.equal(multipleRenders.status, 1);

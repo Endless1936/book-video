@@ -27,6 +27,8 @@ const scriptFiles = [
   "scripts/lib/production-state.mjs",
   "scripts/lib/production-artifacts.mjs",
   "scripts/lib/production-report.mjs",
+  "scripts/lib/production-config.mjs",
+  "scripts/lib/batch-state.mjs",
   "scripts/lib/script-policy.mjs",
   "scripts/lib/script-version.mjs",
   "scripts/lib/title-normalization.mjs",
@@ -39,6 +41,7 @@ const scriptFiles = [
   "scripts/tests/test-production-artifacts.mjs",
   "scripts/tests/test-production-report.mjs",
   "scripts/tests/test-auto-produce.mjs",
+  "scripts/tests/test-final-findings.mjs",
 ];
 
 const testFiles = [
@@ -50,6 +53,7 @@ const testFiles = [
   "scripts/tests/test-production-artifacts.mjs",
   "scripts/tests/test-production-report.mjs",
   "scripts/tests/test-auto-produce.mjs",
+  "scripts/tests/test-final-findings.mjs",
 ];
 
 function commandArgs(command) {
