@@ -25,6 +25,7 @@ const scriptFiles = [
   "scripts/lib/title-normalization.mjs",
   "scripts/lib/weread-request.mjs",
   "scripts/tests/test-body-timings.mjs",
+  "scripts/tests/smoke-timing-fallback.mjs",
   "scripts/tests/test-title-normalization.mjs",
 ];
 

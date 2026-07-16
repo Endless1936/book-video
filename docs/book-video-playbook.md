@@ -11,12 +11,12 @@
    文案长度：推荐总计 18–20 行（含书名），硬上限 22 行（含书名）；正文 `script.csv` 最多 21 行、约 220 个汉字。文案写入临时 `script.csv` 后，必须先运行 `node scripts/validate-script.mjs "<book>"`；未通过时由 Agent 内部缩短，不能先发给用户确认，也不能等到配音或最终渲染阶段才处理。
 5. 图片制作：确认后生成 2-3 张 AI 氛围图和一张结果桥接图，记录提示词和来源。
 6. 音频制作：接收用户的正文口播 MP3，应用故事感旁白处理；没有音频时只出纯画面预览。
-7. 时间轴制作：运行 `scripts/create-body-timings.mjs`；省略版本时自动从 `brief.json` 或 `script.csv` 识别活动版本。ASR 只提供时间参考，`script.csv` 是字幕真源。
+7. 时间轴制作：运行 `scripts/create-body-timings.mjs`；省略版本时自动从 `brief.json` 或 `script.csv` 识别活动版本。时间轴以语音停顿为主，Whisper 文本仅供 Agent 复核；ASR 错别字、模型不可用或停顿不足均不阻断生成，而是按语音时长和脚本提示降级并标记 `alignment.requiresAgentReview`。`script.csv` 始终是字幕真源。
 8. 对齐渲染：裁剪 BGM 到视频长度并完成混音。
 9. 验收替换：检查画幅、时长、字幕、音频和模板连续性。新方案通过技术检查后覆盖旧方案，保持每期只有一套活动资产。
 10. 对话交付：渲染或预览成功后，必须在同一条回复中用绝对路径的 Markdown 视频引用直接展示媒体，同时补充文件路径、时长和规格。不能只给本地路径让用户自行查找。
 
-片头固定使用 `templates/shared-video-template/intro/default-book-list.json` 中的六本书，不依赖 `book-pipeline.example.csv`，也不排除本期目标书；目标书可以先在滚动中出现，最后再定格到目标页。禁止使用“书名一”“作者一”等占位文本。正文字幕必须由 `script.csv` 和 `body-timings.json` 生成，时间轴数量不完整时禁止渲染。
+片头固定使用 `templates/shared-video-template/intro/default-book-list.json` 中的六本书，不依赖 `book-pipeline.example.csv`，也不排除本期目标书；目标书可以先在滚动中出现，最后再定格到目标页。禁止使用“书名一”“作者一”等占位文本。正文字幕以 `script.csv` 为文本真源，优先使用 `body-timings.json`；时间轴缺失、过期或置信度不足时应警告并自动按语音时长或脚本提示降级，继续生成供 Agent 和用户复审。
 
 ## 固定输出规则
 

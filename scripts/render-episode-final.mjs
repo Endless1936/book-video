@@ -125,25 +125,47 @@ function getBgmPath(input) {
   throw new Error(`BGM not found: ${input}`);
 }
 
-function readBodyDuration() {
-  const timings = JSON.parse(fs.readFileSync(timingsPath, "utf8"));
-  if (timings.scriptVersion && timings.scriptVersion !== scriptVersion) {
-    throw new Error(`body-timings.json is for ${timings.scriptVersion}, not ${scriptVersion}`);
+function probeAudioDuration(filePath) {
+  const result = spawnSync(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath],
+    { cwd: ROOT, encoding: "utf8", shell: false },
+  );
+  const duration = Number(result.stdout?.trim());
+  if (result.status !== 0 || !Number.isFinite(duration) || duration <= 0) {
+    throw new Error(`Could not determine audio duration: ${filePath}`);
   }
-  const scriptLines = fs.readFileSync(path.join(episodeDir, "script.csv"), "utf8").trim().split(/\r?\n/u);
-  const expectedCaptionCount = scriptLines.slice(1).filter((line) => line.split(",", 1)[0] === scriptVersion).length;
-  const actualCaptionCount = Array.isArray(timings.captions) ? timings.captions.length : 0;
-  if (expectedCaptionCount === 0 || actualCaptionCount !== expectedCaptionCount) {
-    throw new Error(
-      `Caption timing is incomplete for ${scriptVersion}: expected ${expectedCaptionCount}, got ${actualCaptionCount}. `
-      + "Run create-body-timings.mjs again before rendering.",
+  return duration;
+}
+
+function readBodyDuration() {
+  const fallbackDuration = probeAudioDuration(bodyVoice);
+  if (!fs.existsSync(timingsPath)) {
+    console.warn("Missing body-timings.json; continuing with voiceover duration and script hints");
+    return fallbackDuration;
+  }
+  let timings;
+  try {
+    timings = JSON.parse(fs.readFileSync(timingsPath, "utf8"));
+  } catch (error) {
+    console.warn(`Could not read body-timings.json; continuing with voiceover duration: ${error.message}`);
+    return fallbackDuration;
+  }
+  if (timings.scriptVersion && timings.scriptVersion !== scriptVersion) {
+    console.warn(`body-timings.json is for ${timings.scriptVersion}; continuing with script hints for ${scriptVersion}`);
+    return fallbackDuration;
+  }
+  if (timings.alignment?.requiresAgentReview) {
+    console.warn(
+      `Rendering with timings marked for Agent review (${timings.alignment.method || "unknown method"}): `
+      + `${timings.alignment.reason || "low-confidence ASR alignment"}`,
     );
   }
-  return Number(timings.duration || 0);
+  const timingDuration = Number(timings.duration);
+  return Number.isFinite(timingDuration) && timingDuration > 0 ? timingDuration : fallbackDuration;
 }
 
 if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
-if (!fs.existsSync(timingsPath)) throw new Error(`Missing timing file: ${timingsPath}`);
 if (!fs.existsSync(introVoice)) {
   throw new Error(`Missing shared intro voiceover: ${introVoice}`);
 }
@@ -192,8 +214,8 @@ run("ffmpeg", [
     `[0:v]trim=0:${INTRO_TRIM_SECONDS},setpts=PTS-STARTPTS[v0]`,
     `[1:v]trim=0:${bodyDuration},setpts=PTS-STARTPTS[v1]`,
     "[v0][v1]concat=n=2:v=1:a=0[v]",
-    "[2:a]aresample=48000,volume=1.0[introa]",
-    `[3:a]aresample=48000,adelay=${INTRO_OFFSET_MS}|${INTRO_OFFSET_MS},volume=1.0[bodya]`,
+    "[2:a]asetpts=PTS-STARTPTS,aresample=48000,volume=1.0[introa]",
+    `[3:a]asetpts=PTS-STARTPTS,aresample=48000,adelay=${INTRO_OFFSET_MS}|${INTRO_OFFSET_MS},volume=1.0[bodya]`,
     `[4:a]atrim=0:${finalDuration},asetpts=PTS-STARTPTS,aresample=48000,volume=${FINAL_BGM_VOLUME}[bgm]`,
     `[5:a]atrim=0:${introScrollSfxDuration},asetpts=PTS-STARTPTS,aresample=48000,volume=${INTRO_SCROLL_SFX_VOLUME},afade=t=in:st=0:d=0.01,afade=t=out:st=${introScrollSfxFadeOutStart}:d=${INTRO_SCROLL_SFX_FADE_OUT_SECONDS},adelay=${introScrollSfxDelayMs}|${introScrollSfxDelayMs}[scrollsfx]`,
     "[introa][bodya][bgm][scrollsfx]amix=inputs=4:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95,loudnorm=I=-14.0:TP=-1.0:LRA=7.0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a]",

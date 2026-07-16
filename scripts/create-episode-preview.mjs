@@ -1,10 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { buildEstimatedCaptionTimings } from "./lib/body-timings.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
 
 const ROOT = process.cwd();
+const FALLBACK_CAPTION_START = 1.5;
 const [episodeName, requestedVersion] = process.argv.slice(2);
 
 if (!episodeName) {
@@ -18,6 +21,7 @@ const briefPath = path.join(episodeDir, "brief.json");
 const scriptPath = path.join(episodeDir, "script.csv");
 const imagesDir = path.join(episodeDir, "images");
 const audioTimingsPath = path.join(episodeDir, "audio", "body-timings.json");
+const bodyVoicePath = path.join(episodeDir, "audio", "body-voiceover.mp3");
 
 const workSlug = slugifyEpisodeName(episodeName);
 const workDir = path.join(ROOT, "tmp", `preview-${workSlug}`);
@@ -148,17 +152,44 @@ function createIntro(brief) {
 }
 
 function readOptionalBodyTimings(version) {
-  if (!fs.existsSync(audioTimingsPath)) return null;
-  const raw = JSON.parse(fs.readFileSync(audioTimingsPath, "utf8"));
+  const fallbackDuration = readAudioDuration(bodyVoicePath);
+  if (!fs.existsSync(audioTimingsPath)) {
+    if (fallbackDuration) console.warn("Missing body-timings.json; using script duration hints for captions");
+    return fallbackDuration ? { duration: fallbackDuration, byOrder: new Map() } : null;
+  }
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(audioTimingsPath, "utf8"));
+  } catch (error) {
+    console.warn(`Could not read body-timings.json; using script duration hints: ${error.message}`);
+    return fallbackDuration ? { duration: fallbackDuration, byOrder: new Map() } : null;
+  }
   if (raw.scriptVersion && raw.scriptVersion !== version) {
-    console.warn(`Ignoring body timings for ${raw.scriptVersion}; current script version is ${version}`);
-    return null;
+    console.warn(`Ignoring body timings for ${raw.scriptVersion}; using script duration hints for ${version}`);
+    return fallbackDuration ? { duration: fallbackDuration, byOrder: new Map() } : null;
+  }
+  if (raw.alignment?.requiresAgentReview) {
+    console.warn(
+      `Body timings need Agent review (${raw.alignment.method || "unknown method"}): `
+      + `${raw.alignment.reason || "low-confidence ASR alignment"}`,
+    );
   }
   const byOrder = new Map((raw.captions || []).map((item) => [Number(item.order), item]));
   return {
-    duration: Number(raw.duration),
+    duration: Number(raw.duration) || fallbackDuration,
     byOrder,
   };
+}
+
+function readAudioDuration(filePath) {
+  if (!fs.existsSync(filePath)) return 0;
+  const result = spawnSync(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath],
+    { cwd: ROOT, encoding: "utf8", shell: false },
+  );
+  const duration = Number(result.stdout?.trim());
+  return result.status === 0 && Number.isFinite(duration) && duration > 0 ? duration : 0;
 }
 
 function createBody(brief, rows, audioTimings) {
@@ -170,19 +201,42 @@ function createBody(brief, rows, audioTimings) {
   copyFile(path.join(imagesDir, "atmosphere-2.png"), path.join(bodyDir, "media", "02-atmosphere.png"));
   copyFile(path.join(imagesDir, "atmosphere-3.png"), path.join(bodyDir, "media", "03-atmosphere.png"));
 
-  let cursor = 0.72;
-  const timings = rows.map((row) => {
+  const estimatedByOrder = audioTimings?.duration && audioTimings.byOrder.size === 0
+    ? new Map(buildEstimatedCaptionTimings(
+      rows,
+      [{ start: FALLBACK_CAPTION_START, end: Math.max(FALLBACK_CAPTION_START + 0.3, audioTimings.duration - 0.2) }],
+      audioTimings.duration,
+      0,
+    ).map((item) => [item.order, item]))
+    : new Map();
+  let cursor = audioTimings?.duration ? FALLBACK_CAPTION_START : 0.72;
+  const speechTimings = rows.map((row) => {
     const order = Number(row.order);
-    const audioTiming = audioTimings?.byOrder.get(order);
-    if (audioTiming) {
-      const start = Math.max(0, Number(audioTiming.start));
-      const end = Math.max(start + 0.8, Number(audioTiming.end));
-      return { selector: `.c${row.order}`, start: Number(start.toFixed(2)), hold: Number((end - start).toFixed(2)) };
+    const audioTiming = audioTimings?.byOrder.get(order) || estimatedByOrder.get(order);
+    const start = Number(audioTiming?.start);
+    const end = Number(audioTiming?.end);
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      const safeStart = Math.max(0, start);
+      const safeEnd = Math.max(safeStart + 0.3, end);
+      cursor = Math.max(cursor, safeEnd + 0.12);
+      return { selector: `.c${row.order}`, start: safeStart, end: safeEnd };
     }
     const duration = Number(row.duration_hint || 2);
-    const item = { selector: `.c${row.order}`, start: Number(cursor.toFixed(2)), hold: Math.max(1.05, Number((duration - 0.42).toFixed(2))) };
+    const item = { selector: `.c${row.order}`, start: cursor, end: cursor + Math.max(1.05, duration - 0.42) };
     cursor += duration;
     return item;
+  });
+  const timings = speechTimings.map((item, index) => {
+    const start = Math.max(0, item.start - 0.12);
+    const nextStart = speechTimings[index + 1]?.start;
+    const desiredEnd = item.end + 0.12;
+    const nextDisplayStart = Number.isFinite(nextStart) ? Math.max(0, nextStart - 0.12) : null;
+    const end = nextDisplayStart === null ? desiredEnd : Math.min(desiredEnd, nextDisplayStart - 0.02);
+    return {
+      selector: item.selector,
+      start: Number(start.toFixed(2)),
+      hold: Number(Math.max(0.3, end - start).toFixed(2)),
+    };
   });
   const lastCaptionEnd = timings.reduce((max, item) => Math.max(max, item.start + item.hold), 0);
   const duration = audioTimings?.duration
@@ -259,7 +313,7 @@ ${captionHtml}
       tl.to(".s2", { opacity: 0, duration: 0.76, ease: "sine.inOut" }, ${sceneThree});
       tl.fromTo(".s3 .photo", { scale: 1.035, x: 10, y: 8 }, { scale: 1.1, x: -12, y: -8, duration: ${safeDuration - sceneThree}, ease: "sine.inOut" }, ${sceneThree});
       function revealCaption(selector, start, hold) {
-        tl.fromTo(selector, { opacity: 0, y: 18, scaleX: 0.86, scaleY: 0.985 }, { opacity: 1, y: 0, scaleX: 1, scaleY: 1, duration: 0.34, ease: "power4.out" }, start);
+        tl.fromTo(selector, { opacity: 0, y: 12, scaleX: 0.92, scaleY: 0.99 }, { opacity: 1, y: 0, scaleX: 1, scaleY: 1, duration: 0.16, ease: "power3.out" }, start);
         tl.set(selector, { opacity: 0, y: -10 }, start + hold);
       }
 ${revealJs}

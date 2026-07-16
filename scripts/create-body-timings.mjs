@@ -3,7 +3,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildCaptionTimings, buildSpeechSegments, coalesceSpeechSegments, parseSilenceEvents } from "./lib/body-timings.mjs";
+import {
+  buildCaptionTimings,
+  buildEstimatedCaptionTimings,
+  buildSpeechSegments,
+  coalesceSpeechSegments,
+  parseSilenceEvents,
+} from "./lib/body-timings.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
 
@@ -83,7 +89,6 @@ const timingsPath = path.join(audioDir, "body-timings.json");
 if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
 if (!fs.existsSync(scriptPath)) throw new Error(`Missing script.csv: ${scriptPath}`);
 if (!fs.existsSync(voicePath)) throw new Error(`Voiceover not found: ${voicePath}`);
-if (!fs.existsSync(MODEL_PATH)) throw new Error(`Missing Whisper model: ${MODEL_PATH}. Run node scripts/download-whisper-model.mjs first.`);
 
 const rows = readScriptRows(scriptPath, scriptVersion);
 if (!rows.length) throw new Error(`No script rows found for version ${scriptVersion}`);
@@ -91,33 +96,86 @@ const scriptValidation = validateBodyScript(rows);
 if (scriptValidation.errors.length) throw new Error(scriptValidation.errors.join("；"));
 
 fs.mkdirSync(asrDir, { recursive: true });
-run("whisper-cli", ["-ng", "-m", MODEL_PATH, "-l", "zh", "-oj", "-otxt", "-of", asrBase, voicePath], { stdio: "inherit" });
+const whisperPrompt = `${episodeName}。${rows.map((row) => row.text).join("。")}`;
+let whisperFailure = null;
+if (fs.existsSync(MODEL_PATH)) {
+  try {
+    run(
+      "whisper-cli",
+      ["-ng", "-m", MODEL_PATH, "-l", "zh", "-ojf", "-otxt", "--prompt", whisperPrompt, "-of", asrBase, voicePath],
+      { stdio: "inherit" },
+    );
+  } catch (error) {
+    whisperFailure = error;
+    console.warn(`Whisper unavailable; continuing without ASR text alignment: ${error.message}`);
+  }
+} else {
+  whisperFailure = new Error(`Missing Whisper model: ${MODEL_PATH}`);
+  console.warn(`${whisperFailure.message}; continuing without ASR text alignment`);
+}
 
 const durationResult = run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", voicePath]);
 const duration = Number(durationResult.stdout.trim());
 if (!Number.isFinite(duration) || duration <= 0) throw new Error(`Invalid voiceover duration: ${duration}`);
 
-const silenceResult = run(
-  "ffmpeg",
-  ["-hide_banner", "-i", voicePath, "-af", `silencedetect=noise=${options.noise}:d=${options.silenceDuration}`, "-f", "null", "-"],
-  { stdio: ["ignore", "pipe", "pipe"] },
-);
-const events = parseSilenceEvents(`${silenceResult.stdout}\n${silenceResult.stderr}`);
-const speechSegments = buildSpeechSegments(duration, events);
+let speechSegments;
+let silenceFailure = null;
+try {
+  const silenceResult = run(
+    "ffmpeg",
+    ["-hide_banner", "-i", voicePath, "-af", `silencedetect=noise=${options.noise}:d=${options.silenceDuration}`, "-f", "null", "-"],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const events = parseSilenceEvents(`${silenceResult.stdout}\n${silenceResult.stderr}`);
+  speechSegments = buildSpeechSegments(duration, events);
+} catch (error) {
+  silenceFailure = error;
+  speechSegments = [{ start: 0, end: duration }];
+  console.warn(`Silence detection unavailable; continuing with full audio duration: ${error.message}`);
+}
 const skipLeading = Number(options.skipLeading) || 0;
-const normalizedSegments = coalesceSpeechSegments(speechSegments, rows.length + skipLeading);
-const captions = buildCaptionTimings(rows.map((row) => row.order), normalizedSegments, skipLeading);
-
+let asr = { transcription: [] };
+if (!whisperFailure) {
+  try {
+    asr = JSON.parse(fs.readFileSync(`${asrBase}.json`, "utf8"));
+  } catch (error) {
+    whisperFailure = error;
+    console.warn(`Whisper output could not be read; continuing without ASR text alignment: ${error.message}`);
+  }
+}
+let captions;
+let alignment = {
+  method: "silence-segments",
+  speechSegments: speechSegments.length,
+  requiresAgentReview: false,
+};
+try {
+  const normalizedSegments = coalesceSpeechSegments(speechSegments, rows.length + skipLeading);
+  captions = buildCaptionTimings(rows.map((row) => row.order), normalizedSegments, skipLeading);
+} catch (error) {
+  captions = buildEstimatedCaptionTimings(rows, speechSegments, duration, skipLeading);
+  alignment = {
+    method: "speech-duration-estimate",
+    reason: error.message,
+    speechSegments: speechSegments.length,
+    silenceDetectionAvailable: !silenceFailure,
+    requiresAgentReview: true,
+  };
+  console.warn(`Speech pauses were insufficient; continuing with duration estimate: ${error.message}`);
+}
+alignment.asrAvailable = !whisperFailure;
+alignment.asrText = (asr.transcription || []).map((segment) => segment.text).join("");
 fs.writeFileSync(
   timingsPath,
   `${JSON.stringify({
     scriptVersion,
     duration: Number(duration.toFixed(2)),
-    source: "whisper-cli + ffmpeg silencedetect; script.csv remains subtitle truth",
+    source: `script.csv subtitle truth with ${alignment.method}`,
     audio: path.relative(ROOT, voicePath),
-    asr: path.relative(ROOT, `${asrBase}.json`),
+    asr: fs.existsSync(`${asrBase}.json`) ? path.relative(ROOT, `${asrBase}.json`) : null,
     skipLeadingSegments: skipLeading,
     silence: { noise: options.noise, duration: Number(options.silenceDuration) },
+    alignment,
     captions,
   }, null, 2)}\n`,
 );

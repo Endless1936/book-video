@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "smoke:timings": "node scripts/tests/smoke-timing-fallback.mjs"
   }
 }

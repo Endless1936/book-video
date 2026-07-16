@@ -67,3 +67,42 @@ export function buildCaptionTimings(orders, speechSegments, skipLeading = 1) {
     end: roundSeconds(segment.end),
   }));
 }
+
+function timeAtSpeechOffset(segments, offset) {
+  let remaining = Math.max(0, offset);
+  for (const segment of segments) {
+    const length = segment.end - segment.start;
+    if (remaining <= length) return segment.start + remaining;
+    remaining -= length;
+  }
+  return segments.at(-1)?.end ?? 0;
+}
+
+export function buildEstimatedCaptionTimings(rows, speechSegments, duration, skipLeading = 1) {
+  const startIndex = Math.max(0, Number(skipLeading) || 0);
+  const selected = speechSegments.slice(startIndex);
+  const usableSegments = selected.length
+    ? selected
+    : [{ start: 0, end: Math.max(0.3, Number(duration) || 0.3) }];
+  const totalSpeech = usableSegments.reduce((sum, segment) => sum + Math.max(0, segment.end - segment.start), 0);
+  const weights = rows.map((row) => {
+    const durationHint = Number(row.duration_hint);
+    if (Number.isFinite(durationHint) && durationHint > 0) return durationHint;
+    return Math.max(1, String(row.text).replace(/\s+/gu, "").length);
+  });
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  let consumedWeight = 0;
+
+  return rows.map((row, index) => {
+    const startOffset = totalSpeech * (consumedWeight / totalWeight);
+    consumedWeight += weights[index];
+    const endOffset = totalSpeech * (consumedWeight / totalWeight);
+    const start = timeAtSpeechOffset(usableSegments, startOffset);
+    const end = Math.max(start + 0.3, timeAtSpeechOffset(usableSegments, endOffset));
+    return {
+      order: Number(row.order),
+      start: roundSeconds(start),
+      end: roundSeconds(end),
+    };
+  });
+}

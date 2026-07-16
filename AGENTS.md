@@ -14,7 +14,7 @@ For the first user message in this repository, including a simple greeting such 
 6. If the initialization result reports `wereadApiKey: true` or `weread: enabled`, treat WeChat Reading as configured and never ask for the key again. Only when the result reports it is missing, ask whether to configure the integration. After confirmation, open [微信读书 Skills 官网](https://weread.qq.com/r/weread-skills) with the browser/computer tool and explicitly tell the user: “请在页面获取 API Key，完成后回到本对话把 Key 发给 Agent。” After the user sends it, store it in local `.env` with mode `0600`; never echo or log the key, and never accept it as a command argument. If the user declines key configuration, continue with public research.
 7. Run `scripts/init.mjs` after the dependency and Skill checks. It creates local state and the private pipeline file without asking a second WeChat Reading enablement question.
 
-After a body voiceover is supplied, run `node scripts/create-body-timings.mjs "<book>" [script-version]`. When the version is omitted, the Agent resolves it from `brief.json` or the unique version in `script.csv`. It writes Whisper output under the local episode audio folder and creates `body-timings.json` from speech pauses. The default skips the spoken title/author segment; use `--skip-leading 0` when the audio starts directly with the first script line.
+After a body voiceover is supplied, run `node scripts/create-body-timings.mjs "<book>" [script-version]`. When the version is omitted, the Agent resolves it from `brief.json` or the unique version in `script.csv`. It creates `body-timings.json` from speech pauses and keeps Whisper output only as Agent review context because ASR may contain wrong characters. If pause segmentation is insufficient, estimate timings from speech duration and script hints, mark `alignment.requiresAgentReview`, and continue. Use `--skip-leading` to select how many spoken lead-in segments precede the first script row.
 
 Initialization must be idempotent. It must not reinstall a verified skill, overwrite a valid key, reset user choices, or duplicate CSV columns.
 
@@ -51,10 +51,10 @@ If the user explicitly requests fully automatic production, the script approval 
 - Keep the glass-shard intro, rolling list, stable title/author, atmosphere-first body, slow push-in, crossfade, and white text with black shadow.
 - Meaningful visuals must be AI-generated bitmaps. Do not use SVG as the main visual.
 - Do not use card UI, visible watermarks, copied frames, book-cover mockups, or literal image prompts that weaken atmosphere.
-- Body subtitles must be generated from `script.csv` plus `body-timings.json`; incomplete caption timing is a render-blocking error. Long Chinese lines must wrap within the 720px frame and remain visible.
+- Body subtitles use `script.csv` as text truth and `body-timings.json` when valid. Missing, stale, or low-confidence timings must trigger a visible Agent-review warning and automatic fallback to speech duration or script hints rather than blocking preview or render. Long Chinese lines must wrap within the 720px frame and remain visible.
 - Keep each script row as one complete spoken unit for ASR alignment. The renderer first breaks at commas, periods, question marks, and similar punctuation; each clause stays within roughly 12 Chinese characters. If one clause is longer, it is balanced across multiple visual lines without changing the source text.
 - Keep videos under 60 seconds unless the user explicitly changes the limit.
-- Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them. The four default BGM files under `assets/bgm/` are tracked with project-maintainer redistribution authorization recorded in `templates/shared-video-template/ASSET_PROVENANCE.csv`; do not add new media without the same confirmation.
+- Music, SFX, and voiceover assets may be committed only when the user has the right to redistribute them. A “learning and exchange only” notice does not grant redistribution rights; do not add new media without permission from the relevant rights holder.
 
 ## Script Rules
 
