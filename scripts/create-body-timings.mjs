@@ -10,49 +10,47 @@ import {
   coalesceSpeechSegments,
   parseSilenceEvents,
 } from "./lib/body-timings.mjs";
+import { readCsv } from "./lib/csv.mjs";
+import { validateVoiceoverArtifact } from "./lib/media-validation.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
+import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
 const MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
-const [, , episodeName, requestedVersion, ...rest] = process.argv;
+const [episodeName, ...rawArgs] = process.argv.slice(2);
 
 function readOptions(values) {
   const positional = [];
-  const options = { skipLeading: 1, noise: "-35dB", silenceDuration: "0.18" };
+  const options = { skipLeading: 1, noise: "-35dB", silenceDuration: "0.18", voiceoverNotBefore: "" };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    if (value === "--skip-leading" || value === "--noise" || value === "--silence-duration") {
-      options[{ "--skip-leading": "skipLeading", "--noise": "noise", "--silence-duration": "silenceDuration" }[value]] = values[++index];
-    } else if (value.startsWith("--skip-leading=")) options.skipLeading = value.split("=", 2)[1];
-    else if (value.startsWith("--noise=")) options.noise = value.split("=", 2)[1];
-    else if (value.startsWith("--silence-duration=")) options.silenceDuration = value.split("=", 2)[1];
+    if (value === "--skip-leading" || value === "--noise" || value === "--silence-duration" || value === "--voiceover-not-before") {
+      if (index + 1 >= values.length || values[index + 1] === "") {
+        throw new WorkflowError(`${value} requires a value`, { code: "invalid_arguments" });
+      }
+      options[{
+        "--skip-leading": "skipLeading",
+        "--noise": "noise",
+        "--silence-duration": "silenceDuration",
+        "--voiceover-not-before": "voiceoverNotBefore",
+      }[value]] = values[++index];
+    } else if (value.startsWith("--skip-leading=")) options.skipLeading = value.slice("--skip-leading=".length);
+    else if (value.startsWith("--noise=")) options.noise = value.slice("--noise=".length);
+    else if (value.startsWith("--silence-duration=")) options.silenceDuration = value.slice("--silence-duration=".length);
+    else if (value.startsWith("--voiceover-not-before=")) {
+      options.voiceoverNotBefore = value.slice("--voiceover-not-before=".length);
+      if (!options.voiceoverNotBefore) {
+        throw new WorkflowError("--voiceover-not-before requires a value", { code: "invalid_arguments" });
+      }
+    }
     else positional.push(value);
   }
   return { positional, options };
 }
 
-function parseCsvLine(line) {
-  const values = [];
-  let current = "";
-  let quoted = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === '"' && quoted && line[index + 1] === '"') { current += '"'; index += 1; }
-    else if (char === '"') quoted = !quoted;
-    else if (char === "," && !quoted) { values.push(current); current = ""; }
-    else current += char;
-  }
-  values.push(current);
-  return values;
-}
-
 function readScriptRows(filePath, version) {
-  const lines = fs.readFileSync(filePath, "utf8").trim().split(/\r?\n/u);
-  const headers = parseCsvLine(lines.shift() || "");
-  return lines
-    .filter(Boolean)
-    .map((line) => Object.fromEntries(headers.map((header, index) => [header, parseCsvLine(line)[index] || ""])))
+  return readCsv(filePath).rows
     .filter((row) => row.version === version)
     .sort((a, b) => Number(a.order) - Number(b.order));
 }
@@ -68,15 +66,30 @@ function run(command, args, options = {}) {
 
 function usage() {
   console.error("Usage: node scripts/create-body-timings.mjs <episode-name> [script-version] [voiceover-path] [options]");
-  console.error("Options: --skip-leading 1 --noise -35dB --silence-duration 0.18");
+  console.error("Options: --skip-leading 1 --noise -35dB --silence-duration 0.18 --voiceover-not-before <ISO>");
 }
+
+installWorkflowDiagnostics({
+  root: ROOT,
+  command: "node scripts/create-body-timings.mjs",
+  stage: "voiceover_timing",
+  nextActions: [
+    "Inspect the episode, active script version, and voiceover path named in the error.",
+    "Repair or replace only the failing input, then rerun timing generation.",
+    "If ASR or pause detection fails, retain the generated duration-based fallback and require Agent review.",
+  ],
+});
 
 if (!episodeName) {
   usage();
-  process.exit(1);
+  throw new WorkflowError("Usage: node scripts/create-body-timings.mjs <episode-name> [script-version] [voiceover-path] [options]", {
+    code: "invalid_arguments",
+  });
 }
 
-const { positional, options } = readOptions(rest);
+let requestedVersion = "";
+if (rawArgs[0] && !rawArgs[0].startsWith("--")) requestedVersion = rawArgs.shift();
+const { positional, options } = readOptions(rawArgs);
 const episodeDir = path.join(ROOT, "episodes", episodeName);
 const scriptVersion = resolveScriptVersion(episodeDir, requestedVersion);
 const audioDir = path.join(episodeDir, "audio");
@@ -88,7 +101,7 @@ const timingsPath = path.join(audioDir, "body-timings.json");
 
 if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
 if (!fs.existsSync(scriptPath)) throw new Error(`Missing script.csv: ${scriptPath}`);
-if (!fs.existsSync(voicePath)) throw new Error(`Voiceover not found: ${voicePath}`);
+const voiceover = validateVoiceoverArtifact(voicePath, { notBefore: options.voiceoverNotBefore });
 
 const rows = readScriptRows(scriptPath, scriptVersion);
 if (!rows.length) throw new Error(`No script rows found for version ${scriptVersion}`);
@@ -114,9 +127,7 @@ if (fs.existsSync(MODEL_PATH)) {
   console.warn(`${whisperFailure.message}; continuing without ASR text alignment`);
 }
 
-const durationResult = run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", voicePath]);
-const duration = Number(durationResult.stdout.trim());
-if (!Number.isFinite(duration) || duration <= 0) throw new Error(`Invalid voiceover duration: ${duration}`);
+const duration = voiceover.duration;
 
 let speechSegments;
 let silenceFailure = null;
@@ -165,20 +176,21 @@ try {
 }
 alignment.asrAvailable = !whisperFailure;
 alignment.asrText = (asr.transcription || []).map((segment) => segment.text).join("");
-fs.writeFileSync(
-  timingsPath,
-  `${JSON.stringify({
+const timings = {
     scriptVersion,
     duration: Number(duration.toFixed(2)),
     source: `script.csv subtitle truth with ${alignment.method}`,
     audio: path.relative(ROOT, voicePath),
+    audioFingerprint: voiceover.fingerprint,
     asr: fs.existsSync(`${asrBase}.json`) ? path.relative(ROOT, `${asrBase}.json`) : null,
     skipLeadingSegments: skipLeading,
     silence: { noise: options.noise, duration: Number(options.silenceDuration) },
     alignment,
     captions,
-  }, null, 2)}\n`,
-);
+};
+const temporaryTimingsPath = `${timingsPath}.${process.pid}.tmp`;
+fs.writeFileSync(temporaryTimingsPath, `${JSON.stringify(timings, null, 2)}\n`, { mode: 0o600 });
+fs.renameSync(temporaryTimingsPath, timingsPath);
 
 console.log(`ASR JSON: ${path.relative(ROOT, `${asrBase}.json`)}`);
 console.log(`Body timings: ${path.relative(ROOT, timingsPath)}`);

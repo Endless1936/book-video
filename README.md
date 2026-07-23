@@ -19,6 +19,8 @@ Copyright (c) 2026 prototech, endless, and 未济.
 5. Codex 用 ASR 生成时间参考，以 `script.csv` 为字幕真源，对齐字幕、混入 BGM，并渲染最终 MP4。
 6. 如果你要求替换文案、图片或音频，Codex 会生成新方案，通过检查后覆盖旧方案。
 
+脚本失败不会成为无提示的死路。命令会保留非零退出以阻止坏产物生效，同时输出 `BOOK_VIDEO_DIAGNOSTIC` 并保存到 `tmp/last-workflow-diagnostic.json`。Codex 会据此检查输入或依赖、修复后重试最小失败步骤；旧的有效成片在新候选通过前不会被替换。
+
 你也可以直接用自然语言操作，例如：
 
 - “你好。”

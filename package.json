@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "check": "node scripts/check.mjs",
+    "test": "node scripts/tests/test-csv.mjs && node scripts/tests/test-script-version.mjs && node scripts/tests/test-title-normalization.mjs && node scripts/tests/test-env.mjs && node scripts/tests/test-body-timings.mjs && node scripts/tests/test-media-validation.mjs && node scripts/tests/test-process-voiceover.mjs && node scripts/tests/test-production-report.mjs && node scripts/tests/test-workflow-diagnostics.mjs",
     "smoke:timings": "node scripts/tests/smoke-timing-fallback.mjs"
   }
 }

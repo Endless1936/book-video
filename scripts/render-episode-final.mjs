@@ -3,10 +3,25 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { readCsv } from "./lib/csv.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
+import { isFileFingerprintCurrent, probeMedia } from "./lib/media-validation.mjs";
+import { buildProductionReport, writeProductionReport } from "./lib/production-report.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
+import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
+installWorkflowDiagnostics({
+  root: ROOT,
+  command: "node scripts/render-episode-final.mjs",
+  stage: "final_render",
+  nextActions: [
+    "Inspect the failed command, referenced media, and tmp preview artifacts.",
+    "Correct only the failing input or dependency, then rerun the render.",
+    "Keep the previous active render until the new candidate passes technical checks.",
+    "After a successful render, inspect representative frames and update production-report.json.",
+  ],
+});
 const HYPERFRAMES_VERSION = "0.7.33";
 const INTRO_TRIM_SECONDS = 2.38;
 const INTRO_OFFSET_MS = Math.round(INTRO_TRIM_SECONDS * 1000);
@@ -26,8 +41,9 @@ const INTRO_SCROLL_SFX_PATH = path.join(ROOT, "assets", "sfx", "gear-scroll.mp3"
 const [episodeName, requestedVersion, bgmInput] = process.argv.slice(2);
 
 if (!episodeName) {
-  console.error("Usage: node scripts/render-episode-final.mjs <episode-name> [script-version] [bgm-file-or-name]");
-  process.exit(1);
+  throw new WorkflowError("Usage: node scripts/render-episode-final.mjs <episode-name> [script-version] [bgm-file-or-name]", {
+    code: "invalid_arguments",
+  });
 }
 
 function chooseRandomBgm() {
@@ -53,6 +69,8 @@ const bgmSlug = slugifyBgmName(bgmArg);
 const episodeDir = path.join(ROOT, "episodes", episodeName);
 const scriptVersion = resolveScriptVersion(episodeDir, requestedVersion);
 const audioDir = path.join(episodeDir, "audio");
+const imagesDir = path.join(episodeDir, "images");
+const scriptPath = path.join(episodeDir, "script.csv");
 const rendersDir = path.join(episodeDir, "renders");
 const timingsPath = path.join(audioDir, "body-timings.json");
 const previewDir = path.join(ROOT, "tmp", `preview-${slug}`);
@@ -78,33 +96,22 @@ const introScrollSfxFadeOutStart = Number((introScrollSfxDuration - INTRO_SCROLL
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || ROOT,
-    stdio: "inherit",
+    stdio: options.stdio || "inherit",
     shell: false,
   });
-  if (result.status !== 0) process.exit(result.status ?? 1);
-}
-
-function probeVideo(filePath) {
-  const result = spawnSync(
-    "ffprobe",
-    ["-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json", filePath],
-    { cwd: ROOT, encoding: "utf8", shell: false },
-  );
   if (result.status !== 0) {
-    throw new Error(`ffprobe failed for ${filePath}: ${result.stderr || "unknown error"}`);
+    throw new WorkflowError(`${command} failed with status ${result.status ?? "unknown"}`, {
+      code: "subprocess_failed",
+      details: {
+        command,
+        args,
+        cwd: options.cwd || ROOT,
+        status: result.status,
+        signal: result.signal,
+      },
+    });
   }
-  const probe = JSON.parse(result.stdout);
-  const video = probe.streams?.find((stream) => stream.codec_type === "video");
-  const audio = probe.streams?.find((stream) => stream.codec_type === "audio");
-  const duration = Number(probe.format?.duration || 0);
-  if (!video || video.width !== 720 || video.height !== 960) {
-    throw new Error(`Invalid final video dimensions: ${video?.width || 0}x${video?.height || 0}`);
-  }
-  if (!audio) throw new Error("Final video has no audio stream");
-  if (!Number.isFinite(duration) || duration <= 0) throw new Error(`Invalid final duration: ${duration}`);
-  if (duration > 60.05 && !ALLOW_OVER_60_SECONDS) {
-    throw new Error(`Final video is ${duration.toFixed(2)}s; maximum is 60s`);
-  }
+  return result;
 }
 
 function activateFinalRender(candidatePath, destinationPath) {
@@ -138,6 +145,12 @@ function probeAudioDuration(filePath) {
   return duration;
 }
 
+let timingAlignment = {
+  method: "voiceover-duration",
+  reason: "body timings were unavailable or stale",
+  requiresAgentReview: true,
+};
+
 function readBodyDuration() {
   const fallbackDuration = probeAudioDuration(bodyVoice);
   if (!fs.existsSync(timingsPath)) {
@@ -155,6 +168,17 @@ function readBodyDuration() {
     console.warn(`body-timings.json is for ${timings.scriptVersion}; continuing with script hints for ${scriptVersion}`);
     return fallbackDuration;
   }
+  if (!isFileFingerprintCurrent(bodyVoice, timings.audioFingerprint)) {
+    console.warn("body-timings.json does not match the current voiceover; continuing with voiceover duration and script hints");
+    return fallbackDuration;
+  }
+  timingAlignment = {
+    method: timings.alignment?.method || "unknown",
+    reason: timings.alignment?.reason || "",
+    requiresAgentReview: timings.alignment?.requiresAgentReview === true,
+    asrAvailable: timings.alignment?.asrAvailable === true,
+    silenceDetectionAvailable: timings.alignment?.silenceDetectionAvailable !== false,
+  };
   if (timings.alignment?.requiresAgentReview) {
     console.warn(
       `Rendering with timings marked for Agent review (${timings.alignment.method || "unknown method"}): `
@@ -242,7 +266,36 @@ run("ffmpeg", [
   candidateOutputPath,
 ]);
 
-probeVideo(candidateOutputPath);
+const finalProbe = probeMedia(candidateOutputPath);
+const subtitleCount = readCsv(scriptPath).rows.filter((row) => row.version === scriptVersion).length;
+const requiredImageNames = [
+  "result-bridge.png",
+  "atmosphere-1.png",
+  "atmosphere-2.png",
+  "atmosphere-3.png",
+];
+const report = buildProductionReport({
+  book: episodeName,
+  scriptVersion,
+  bgm: path.basename(bgmPath),
+  output: path.join("renders", path.basename(outputPath)),
+  probe: finalProbe,
+  subtitleCount,
+  requiredImages: requiredImageNames.map((name) => ({
+    name,
+    present: fs.existsSync(path.join(imagesDir, name)),
+  })),
+  audioInputs: {
+    introVoice: fs.existsSync(introVoice),
+    bodyVoice: fs.existsSync(bodyVoice),
+    bgm: fs.existsSync(bgmPath),
+    gearSfx: fs.existsSync(INTRO_SCROLL_SFX_PATH),
+  },
+  timingAlignment,
+  allowOver60Seconds: ALLOW_OVER_60_SECONDS,
+});
+const reportPath = writeProductionReport(episodeDir, report);
 activateFinalRender(candidateOutputPath, outputPath);
 fs.rmSync(previewDir, { recursive: true, force: true });
+console.log(`Production report: ${reportPath}`);
 console.log(outputPath);

@@ -3,6 +3,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeDisplayTitle } from "./lib/title-normalization.mjs";
+import { csvEscape, readCsv } from "./lib/csv.mjs";
+import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
 const DATA_DIR = path.join(ROOT, "data");
@@ -10,40 +12,21 @@ const PIPELINE_PATH = path.join(DATA_DIR, "book-pipeline.csv");
 const EXAMPLE_PATH = path.join(DATA_DIR, "book-pipeline.example.csv");
 const inputPath = process.argv[2];
 
+installWorkflowDiagnostics({
+  root: ROOT,
+  command: "node scripts/record-book-candidates.mjs",
+  stage: "book_candidate_recording",
+  nextActions: [
+    "Inspect the candidate JSON and ensure it is valid JSON.",
+    "Provide an array or an object with a candidates array, then rerun the command.",
+    "Keep the existing book pipeline unchanged until recording succeeds.",
+  ],
+});
+
 if (!inputPath) {
-  console.error("Usage: node scripts/record-book-candidates.mjs <candidates.json>");
-  process.exit(1);
-}
-
-function parseCsvLine(line) {
-  const values = [];
-  let current = "";
-  let quoted = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === '"' && quoted && line[index + 1] === '"') { current += '"'; index += 1; }
-    else if (char === '"') quoted = !quoted;
-    else if (char === "," && !quoted) { values.push(current); current = ""; }
-    else current += char;
-  }
-  values.push(current);
-  return values;
-}
-
-function csvEscape(value) {
-  const text = String(value ?? "");
-  return /[",\n]/u.test(text) ? `"${text.replace(/"/gu, '""')}"` : text;
-}
-
-function readCsv(filePath) {
-  const text = fs.readFileSync(filePath, "utf8").trim();
-  const lines = text ? text.split(/\r?\n/u) : [];
-  const headers = parseCsvLine(lines.shift() || "");
-  const rows = lines.filter(Boolean).map((line) => {
-    const values = parseCsvLine(line);
-    return Object.fromEntries(headers.map((header, index) => [header, values[index] || ""]));
+  throw new WorkflowError("Usage: node scripts/record-book-candidates.mjs <candidates.json>", {
+    code: "invalid_arguments",
   });
-  return { headers, rows };
 }
 
 function rowKey(row) {

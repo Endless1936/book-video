@@ -4,11 +4,13 @@ import fs from "node:fs";
 import https from "node:https";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { clearWorkflowDiagnostic, reportWorkflowFailure } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
 const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
 const MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
 const MIN_BYTES = 100 * 1024 * 1024;
+clearWorkflowDiagnostic(ROOT);
 
 function download(url, destination, redirects = 0) {
   if (redirects > 5) throw new Error("Too many redirects while downloading Whisper model");
@@ -33,29 +35,39 @@ function download(url, destination, redirects = 0) {
       const tempPath = `${destination}.${process.pid}.tmp`;
       const file = fs.createWriteStream(tempPath);
       let received = 0;
+      let settled = false;
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        response.unpipe(file);
+        response.destroy();
+        file.destroy();
+        fs.rmSync(tempPath, { force: true });
+        reject(error);
+      };
       response.on("data", (chunk) => {
         received += chunk.length;
         if (process.stdout.isTTY) {
           process.stdout.write(`\rDownloading ggml-base.bin ${(received / 1024 / 1024).toFixed(1)} MB`);
         }
       });
+      response.on("aborted", () => fail(new Error("Whisper model download was aborted")));
+      response.on("error", fail);
       response.pipe(file);
       file.on("finish", () => {
         file.close(() => {
+          if (settled) return;
           if (received < MIN_BYTES) {
-            fs.rmSync(tempPath, { force: true });
-            reject(new Error(`Downloaded file is too small: ${received} bytes`));
+            fail(new Error(`Downloaded file is too small: ${received} bytes`));
             return;
           }
+          settled = true;
           fs.renameSync(tempPath, destination);
           if (process.stdout.isTTY) process.stdout.write("\n");
           resolve();
         });
       });
-      file.on("error", (error) => {
-        fs.rmSync(tempPath, { force: true });
-        reject(error);
-      });
+      file.on("error", fail);
     });
     request.on("error", reject);
   });
@@ -111,8 +123,16 @@ try {
     console.log(`Whisper model saved: ${MODEL_PATH}`);
   }
 } catch (error) {
-  console.error(`Whisper model setup failed: ${error.message}`);
   console.error(`Browser download: ${MODEL_URL}`);
   console.error("After downloading, tell the agent the local file path so it can run: node scripts/download-whisper-model.mjs --from <path>");
-  process.exitCode = 1;
+  reportWorkflowFailure(error, {
+    root: ROOT,
+    command: "node scripts/download-whisper-model.mjs",
+    stage: "whisper_model_setup",
+    nextActions: [
+      "Retry with the active proxy when one is configured.",
+      `Otherwise download ${MODEL_URL} in a browser.`,
+      "Install the downloaded file with node scripts/download-whisper-model.mjs --from <local-path>.",
+    ],
+  });
 }

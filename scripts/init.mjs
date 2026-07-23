@@ -7,6 +7,12 @@ import { spawnSync } from "node:child_process";
 import { stdin as input, stdout as output } from "node:process";
 import { normalizeDisplayTitle } from "./lib/title-normalization.mjs";
 import { readEnvValue } from "./lib/env.mjs";
+import { csvRow, readCsv } from "./lib/csv.mjs";
+import {
+  WorkflowError,
+  clearWorkflowDiagnostic,
+  reportWorkflowFailure,
+} from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
 const DATA_DIR = path.join(ROOT, "data");
@@ -29,34 +35,6 @@ function fileExists(filePath, minimumBytes = 0) {
   if (!fs.existsSync(filePath)) return false;
   const stat = fs.statSync(filePath);
   return stat.isFile() && stat.size >= minimumBytes;
-}
-
-function parseCsvLine(line) {
-  const values = [];
-  let current = "";
-  let quoted = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === '"' && quoted && line[index + 1] === '"') { current += '"'; index += 1; }
-    else if (char === '"') quoted = !quoted;
-    else if (char === "," && !quoted) { values.push(current); current = ""; }
-    else current += char;
-  }
-  values.push(current);
-  return values;
-}
-
-function csvEscape(value) {
-  const text = String(value ?? "");
-  return /[",\n]/u.test(text) ? `"${text.replace(/"/gu, '""')}"` : text;
-}
-
-function csvRow(values) { return values.map(csvEscape).join(","); }
-
-function readCsv(filePath) {
-  const lines = fs.readFileSync(filePath, "utf8").trim().split(/\r?\n/u);
-  const headers = parseCsvLine(lines.shift() || "");
-  return { headers, rows: lines.filter(Boolean).map((line) => Object.fromEntries(headers.map((header, index) => [header, parseCsvLine(line)[index] || ""])))};
 }
 
 function writeEnvKey(key) {
@@ -113,6 +91,7 @@ function migratePipeline() {
 }
 
 async function main() {
+  clearWorkflowDiagnostic(ROOT);
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   let previousState = null;
   if (fs.existsSync(STATE_PATH)) {
@@ -153,7 +132,26 @@ async function main() {
     platform: `${process.platform}-${os.arch()}`,
   };
   console.log(JSON.stringify({ pipeline: pipelineStatus, checks }, null, 2));
-  if (!checks.node || !checks.ffmpeg || !checks.ffprobe || !checks.npx) process.exitCode = 1;
+  const missing = Object.entries({
+    "Node.js 22+": checks.node,
+    ffmpeg: checks.ffmpeg,
+    ffprobe: checks.ffprobe,
+    npx: checks.npx,
+  }).filter(([, available]) => !available).map(([name]) => name);
+  if (missing.length) {
+    throw new WorkflowError(`Missing required runtime prerequisites: ${missing.join(", ")}`, {
+      code: "missing_runtime_prerequisites",
+      nextActions: [
+        "Install the complete missing prerequisite list after user confirmation.",
+        "Rerun node scripts/init.mjs and continue from the existing local state.",
+      ],
+      details: { missing },
+    });
+  }
 }
 
-main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+main().catch((error) => reportWorkflowFailure(error, {
+  root: ROOT,
+  command: "node scripts/init.mjs",
+  stage: "initialization",
+}));

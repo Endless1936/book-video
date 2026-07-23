@@ -2,17 +2,32 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { buildEstimatedCaptionTimings } from "./lib/body-timings.mjs";
+import { readCsv } from "./lib/csv.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
+import { isFileFingerprintCurrent } from "./lib/media-validation.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
+import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
 const FALLBACK_CAPTION_START = 1.5;
 const [episodeName, requestedVersion] = process.argv.slice(2);
 
+installWorkflowDiagnostics({
+  root: ROOT,
+  command: "node scripts/create-episode-preview.mjs",
+  stage: "preview_generation",
+  nextActions: [
+    "Inspect brief.json, script.csv, and the required episode images.",
+    "Repair the missing or invalid artifact, then rerun preview generation.",
+    "Timing warnings may use the duration fallback; missing visual or script inputs must be corrected.",
+  ],
+});
+
 if (!episodeName) {
-  console.error("Usage: node scripts/create-episode-preview.mjs <episode-name> [script-version]");
-  process.exit(1);
+  throw new WorkflowError("Usage: node scripts/create-episode-preview.mjs <episode-name> [script-version]", {
+    code: "invalid_arguments",
+  });
 }
 
 const episodeDir = path.join(ROOT, "episodes", episodeName);
@@ -28,38 +43,6 @@ const workDir = path.join(ROOT, "tmp", `preview-${workSlug}`);
 const introDir = path.join(workDir, "intro");
 const bodyDir = path.join(workDir, "body");
 const defaultIntroBooksPath = path.join(ROOT, "templates", "shared-video-template", "intro", "default-book-list.json");
-
-function readCsv(filePath) {
-  const text = fs.readFileSync(filePath, "utf8").trim();
-  const lines = text.split(/\r?\n/);
-  const headers = parseCsvLine(lines.shift());
-  return lines.map((line) => {
-    const values = parseCsvLine(line);
-    return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
-  });
-}
-
-function parseCsvLine(line) {
-  const values = [];
-  let current = "";
-  let quoted = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === '"' && quoted && line[index + 1] === '"') {
-      current += '"';
-      index += 1;
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === "," && !quoted) {
-      values.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-  values.push(current);
-  return values;
-}
 
 function copyFile(src, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -166,6 +149,10 @@ function readOptionalBodyTimings(version) {
   }
   if (raw.scriptVersion && raw.scriptVersion !== version) {
     console.warn(`Ignoring body timings for ${raw.scriptVersion}; using script duration hints for ${version}`);
+    return fallbackDuration ? { duration: fallbackDuration, byOrder: new Map() } : null;
+  }
+  if (!isFileFingerprintCurrent(bodyVoicePath, raw.audioFingerprint)) {
+    console.warn("Ignoring body timings because the voiceover changed or has no fingerprint; using script duration hints");
     return fallbackDuration ? { duration: fallbackDuration, byOrder: new Map() } : null;
   }
   if (raw.alignment?.requiresAgentReview) {
@@ -345,13 +332,12 @@ ${revealJs}
 cleanDir(workDir);
 
 const brief = JSON.parse(fs.readFileSync(briefPath, "utf8"));
-const rows = readCsv(scriptPath)
+const rows = readCsv(scriptPath).rows
   .filter((row) => row.version === version)
   .sort((a, b) => Number(a.order) - Number(b.order));
 
 if (!rows.length) {
-  console.error(`No script rows found for version ${version}`);
-  process.exit(1);
+  throw new Error(`No script rows found for version ${version}`);
 }
 const scriptValidation = validateBodyScript(rows);
 if (scriptValidation.errors.length) throw new Error(scriptValidation.errors.join("；"));

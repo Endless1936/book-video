@@ -4,8 +4,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
+installWorkflowDiagnostics({
+  root: ROOT,
+  command: "npm run check",
+  stage: "repository_validation",
+  nextActions: [
+    "Identify the first failed dependency, syntax check, test, or HyperFrames command.",
+    "Correct that specific cause and rerun the narrow check before npm run check.",
+    "Do not discard previously valid episode artifacts while repository checks are repaired.",
+  ],
+});
 const HYPERFRAMES_VERSION = "0.7.33";
 const requiredCommands = ["ffmpeg", "ffprobe", "npx"];
 const scriptFiles = [
@@ -18,15 +29,37 @@ const scriptFiles = [
   "scripts/render-episode-final.mjs",
   "scripts/validate-script.mjs",
   "scripts/lib/body-timings.mjs",
+  "scripts/lib/csv.mjs",
   "scripts/lib/episode-slug.mjs",
   "scripts/lib/env.mjs",
+  "scripts/lib/media-validation.mjs",
+  "scripts/lib/production-report.mjs",
   "scripts/lib/script-policy.mjs",
   "scripts/lib/script-version.mjs",
   "scripts/lib/title-normalization.mjs",
   "scripts/lib/weread-request.mjs",
+  "scripts/lib/workflow-diagnostics.mjs",
   "scripts/tests/test-body-timings.mjs",
+  "scripts/tests/test-csv.mjs",
   "scripts/tests/smoke-timing-fallback.mjs",
+  "scripts/tests/test-media-validation.mjs",
+  "scripts/tests/test-process-voiceover.mjs",
+  "scripts/tests/test-production-report.mjs",
+  "scripts/tests/test-script-version.mjs",
   "scripts/tests/test-title-normalization.mjs",
+  "scripts/tests/test-workflow-diagnostics.mjs",
+];
+
+const testFiles = [
+  "scripts/tests/test-csv.mjs",
+  "scripts/tests/test-script-version.mjs",
+  "scripts/tests/test-title-normalization.mjs",
+  "scripts/tests/test-env.mjs",
+  "scripts/tests/test-body-timings.mjs",
+  "scripts/tests/test-media-validation.mjs",
+  "scripts/tests/test-process-voiceover.mjs",
+  "scripts/tests/test-production-report.mjs",
+  "scripts/tests/test-workflow-diagnostics.mjs",
 ];
 
 function commandArgs(command) {
@@ -60,12 +93,10 @@ if (
   throw new Error("Default intro book list must contain exactly six books with authors");
 }
 
-const test = run(process.execPath, ["scripts/tests/test-title-normalization.mjs"]);
-if (test.status !== 0) throw new Error(test.stderr || "Title normalization test failed");
-const timingTest = run(process.execPath, ["scripts/tests/test-body-timings.mjs"]);
-if (timingTest.status !== 0) throw new Error(timingTest.stderr || "Body timing test failed");
-const envTest = run(process.execPath, ["scripts/tests/test-env.mjs"]);
-if (envTest.status !== 0) throw new Error(envTest.stderr || "Environment parsing test failed");
+for (const file of testFiles) {
+  const result = run(process.execPath, [file]);
+  if (result.status !== 0) throw new Error(`Test failed: ${file}${result.stderr ? `\n${result.stderr}` : ""}`);
+}
 
 const templateSourceDir = path.join(ROOT, "templates", "shared-video-template", "intro");
 const templateDir = fs.mkdtempSync(path.join(os.tmpdir(), "book-video-hyperframes-check-"));
