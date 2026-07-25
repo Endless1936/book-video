@@ -6,14 +6,18 @@ import { readCsv } from "./lib/csv.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
+import { beginWorkflowStep, completeWorkflowStep } from "./lib/workflow-state.mjs";
 
 const ROOT = process.cwd();
 const [episodeName, requestedVersion] = process.argv.slice(2);
+const episodeDir = episodeName ? path.join(ROOT, "episodes", episodeName) : "";
 
 installWorkflowDiagnostics({
   root: ROOT,
   command: "node scripts/validate-script.mjs",
   stage: "script_validation",
+  episodeDir,
+  workflowStep: "script_validated",
   nextActions: [
     "Inspect the active script rows and the reported line or character limits.",
     "Revise script.csv without changing approved text silently, then rerun validation.",
@@ -27,7 +31,8 @@ if (!episodeName) {
   });
 }
 
-const episodeDir = path.join(ROOT, "episodes", episodeName);
+if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
+beginWorkflowStep(episodeDir, "script_validated");
 const scriptPath = path.join(episodeDir, "script.csv");
 if (!fs.existsSync(scriptPath)) throw new Error(`Missing script.csv: ${scriptPath}`);
 const version = resolveScriptVersion(episodeDir, requestedVersion);
@@ -44,3 +49,4 @@ if (result.errors.length) {
     details: result,
   });
 }
+completeWorkflowStep(episodeDir, "script_validated");

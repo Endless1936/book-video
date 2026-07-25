@@ -8,10 +8,12 @@
 episodes/book-slug/
   brief.json        # 书籍信息、主情绪、目标人群、视觉方向
   script.csv        # 唯一现行字幕/旁白文本
+  script-approval.json # 与当前文案指纹绑定的批准记录
   prompts.csv       # 唯一现行 AI 生图方案
   images/           # AI 生成图片，git 忽略
   audio/            # 口播、ASR、body-timings.json，git 忽略
   renders/          # 渲染结果，git 忽略
+  workflow-state.json # 可重建的本地工作流状态
 ```
 
 维护原则：
@@ -21,4 +23,5 @@ episodes/book-slug/
 - 音频版必须确认口播匹配的 `script.csv` 版本。
 - 新方案生成成功后覆盖旧方案；文本历史交给 Git，媒体旧版不归档。
 - 当前只保留最新有效图片、音频和 render，错误版和过期预览及时删除。
+- 工作流状态以真实产物为依据；状态丢失或损坏时由 Agent 扫描产物重建。
 - A/B 对比文件只能临时放在 `tmp/`，确认选择后删除。

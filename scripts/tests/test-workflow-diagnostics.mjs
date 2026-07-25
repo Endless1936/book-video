@@ -35,6 +35,7 @@ const workflowEntrypoints = [
   "record-book-candidates.mjs",
   "render-episode-final.mjs",
   "validate-script.mjs",
+  "workflow-state.mjs",
 ];
 for (const file of workflowEntrypoints) {
   const source = fs.readFileSync(path.resolve("scripts", file), "utf8");

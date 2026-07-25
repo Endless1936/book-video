@@ -17,7 +17,7 @@ try {
     output,
     "story",
   ], {
-    cwd: process.cwd(),
+    cwd: directory,
     encoding: "utf8",
     shell: false,
   });

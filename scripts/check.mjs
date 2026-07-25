@@ -28,6 +28,7 @@ const scriptFiles = [
   "scripts/process-voiceover.mjs",
   "scripts/render-episode-final.mjs",
   "scripts/validate-script.mjs",
+  "scripts/workflow-state.mjs",
   "scripts/lib/body-timings.mjs",
   "scripts/lib/csv.mjs",
   "scripts/lib/episode-slug.mjs",
@@ -39,6 +40,7 @@ const scriptFiles = [
   "scripts/lib/title-normalization.mjs",
   "scripts/lib/weread-request.mjs",
   "scripts/lib/workflow-diagnostics.mjs",
+  "scripts/lib/workflow-state.mjs",
   "scripts/tests/test-body-timings.mjs",
   "scripts/tests/test-csv.mjs",
   "scripts/tests/smoke-timing-fallback.mjs",
@@ -48,6 +50,7 @@ const scriptFiles = [
   "scripts/tests/test-script-version.mjs",
   "scripts/tests/test-title-normalization.mjs",
   "scripts/tests/test-workflow-diagnostics.mjs",
+  "scripts/tests/test-workflow-state.mjs",
 ];
 
 const testFiles = [
@@ -60,6 +63,7 @@ const testFiles = [
   "scripts/tests/test-process-voiceover.mjs",
   "scripts/tests/test-production-report.mjs",
   "scripts/tests/test-workflow-diagnostics.mjs",
+  "scripts/tests/test-workflow-state.mjs",
 ];
 
 function commandArgs(command) {

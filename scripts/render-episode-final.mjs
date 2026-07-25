@@ -5,16 +5,21 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readCsv } from "./lib/csv.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
-import { isFileFingerprintCurrent, probeMedia } from "./lib/media-validation.mjs";
+import { fingerprintFile, isFileFingerprintCurrent, probeMedia } from "./lib/media-validation.mjs";
 import { buildProductionReport, writeProductionReport } from "./lib/production-report.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
+import { beginWorkflowStep, completeWorkflowStep } from "./lib/workflow-state.mjs";
 
 const ROOT = process.cwd();
+const [episodeName, requestedVersion, bgmInput] = process.argv.slice(2);
+const episodeDir = episodeName ? path.join(ROOT, "episodes", episodeName) : "";
 installWorkflowDiagnostics({
   root: ROOT,
   command: "node scripts/render-episode-final.mjs",
   stage: "final_render",
+  episodeDir,
+  workflowStep: "rendered",
   nextActions: [
     "Inspect the failed command, referenced media, and tmp preview artifacts.",
     "Correct only the failing input or dependency, then rerun the render.",
@@ -38,13 +43,13 @@ const INTRO_SCROLL_SFX_FADE_OUT_SECONDS = 0.2;
 const INTRO_SCROLL_SFX_VOLUME = 1.4;
 const INTRO_SCROLL_SFX_PATH = path.join(ROOT, "assets", "sfx", "gear-scroll.mp3");
 
-const [episodeName, requestedVersion, bgmInput] = process.argv.slice(2);
-
 if (!episodeName) {
   throw new WorkflowError("Usage: node scripts/render-episode-final.mjs <episode-name> [script-version] [bgm-file-or-name]", {
     code: "invalid_arguments",
   });
 }
+if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
+beginWorkflowStep(episodeDir, "rendered");
 
 function chooseRandomBgm() {
   const bgmDir = path.join(ROOT, "assets", "bgm");
@@ -66,7 +71,6 @@ function slugifyBgmName(input) {
 
 const slug = slugifyEpisodeName(episodeName);
 const bgmSlug = slugifyBgmName(bgmArg);
-const episodeDir = path.join(ROOT, "episodes", episodeName);
 const scriptVersion = resolveScriptVersion(episodeDir, requestedVersion);
 const audioDir = path.join(episodeDir, "audio");
 const imagesDir = path.join(episodeDir, "images");
@@ -189,7 +193,6 @@ function readBodyDuration() {
   return Number.isFinite(timingDuration) && timingDuration > 0 ? timingDuration : fallbackDuration;
 }
 
-if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
 if (!fs.existsSync(introVoice)) {
   throw new Error(`Missing shared intro voiceover: ${introVoice}`);
 }
@@ -292,10 +295,17 @@ const report = buildProductionReport({
     gearSfx: fs.existsSync(INTRO_SCROLL_SFX_PATH),
   },
   timingAlignment,
+  inputArtifacts: {
+    bgm: {
+      path: path.relative(ROOT, bgmPath),
+      fingerprint: fingerprintFile(bgmPath),
+    },
+  },
   allowOver60Seconds: ALLOW_OVER_60_SECONDS,
 });
 const reportPath = writeProductionReport(episodeDir, report);
 activateFinalRender(candidateOutputPath, outputPath);
+completeWorkflowStep(episodeDir, "rendered", { quality: "review_required" });
 fs.rmSync(previewDir, { recursive: true, force: true });
 console.log(`Production report: ${reportPath}`);
 console.log(outputPath);

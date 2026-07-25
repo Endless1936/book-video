@@ -15,10 +15,12 @@ import { validateVoiceoverArtifact } from "./lib/media-validation.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
+import { beginWorkflowStep, completeWorkflowStep } from "./lib/workflow-state.mjs";
 
 const ROOT = process.cwd();
 const MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
 const [episodeName, ...rawArgs] = process.argv.slice(2);
+const episodeDir = episodeName ? path.join(ROOT, "episodes", episodeName) : "";
 
 function readOptions(values) {
   const positional = [];
@@ -73,6 +75,8 @@ installWorkflowDiagnostics({
   root: ROOT,
   command: "node scripts/create-body-timings.mjs",
   stage: "voiceover_timing",
+  episodeDir,
+  workflowStep: "timed",
   nextActions: [
     "Inspect the episode, active script version, and voiceover path named in the error.",
     "Repair or replace only the failing input, then rerun timing generation.",
@@ -90,7 +94,8 @@ if (!episodeName) {
 let requestedVersion = "";
 if (rawArgs[0] && !rawArgs[0].startsWith("--")) requestedVersion = rawArgs.shift();
 const { positional, options } = readOptions(rawArgs);
-const episodeDir = path.join(ROOT, "episodes", episodeName);
+if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
+beginWorkflowStep(episodeDir, "timed");
 const scriptVersion = resolveScriptVersion(episodeDir, requestedVersion);
 const audioDir = path.join(episodeDir, "audio");
 const scriptPath = path.join(episodeDir, "script.csv");
@@ -99,7 +104,6 @@ const asrDir = path.join(audioDir, "asr");
 const asrBase = path.join(asrDir, "body");
 const timingsPath = path.join(audioDir, "body-timings.json");
 
-if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
 if (!fs.existsSync(scriptPath)) throw new Error(`Missing script.csv: ${scriptPath}`);
 const voiceover = validateVoiceoverArtifact(voicePath, { notBefore: options.voiceoverNotBefore });
 
@@ -191,6 +195,9 @@ const timings = {
 const temporaryTimingsPath = `${timingsPath}.${process.pid}.tmp`;
 fs.writeFileSync(temporaryTimingsPath, `${JSON.stringify(timings, null, 2)}\n`, { mode: 0o600 });
 fs.renameSync(temporaryTimingsPath, timingsPath);
+completeWorkflowStep(episodeDir, "timed", {
+  quality: alignment.requiresAgentReview ? "degraded" : "pass",
+});
 
 console.log(`ASR JSON: ${path.relative(ROOT, `${asrBase}.json`)}`);
 console.log(`Body timings: ${path.relative(ROOT, timingsPath)}`);

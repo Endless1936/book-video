@@ -17,6 +17,7 @@ export function buildProductionReport({
   requiredImages,
   audioInputs,
   timingAlignment,
+  inputArtifacts = {},
   allowOver60Seconds = false,
   now = new Date().toISOString(),
 }) {
@@ -45,6 +46,7 @@ export function buildProductionReport({
     scriptVersion,
     bgm,
     output,
+    inputArtifacts,
     technicalChecks: {
       passed: true,
       duration,

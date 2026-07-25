@@ -18,6 +18,8 @@ After a body voiceover is supplied, run `node scripts/create-body-timings.mjs "<
 
 If any repository script exits nonzero, do not stop after relaying the error. Read the `BOOK_VIDEO_DIAGNOSTIC` output and `tmp/last-workflow-diagnostic.json`, inspect the named inputs or subprocess, then fix and retry the narrowest failed step or use its documented fallback. A failed quality gate blocks activation of an invalid artifact, not the rest of the Agent workflow. Preserve the last valid artifact, continue every safe independent step, and ask the user only for actions that require their input or permission.
 
+For episode work, reconcile `episodes/<book>/workflow-state.json` with `node scripts/workflow-state.mjs repair "<book>"` before resuming. Treat it as a recoverable cache of artifact state, not a source of truth above the files. Record external Agent steps such as script approval, illustration completion, verification, and delivery with `node scripts/workflow-state.mjs record "<book>" <step>` after their artifacts or review gates pass. Never convert repeated failure into a terminal workflow state.
+
 Initialization must be idempotent. It must not reinstall a verified skill, overwrite a valid key, reset user choices, or duplicate CSV columns.
 
 ## Book Selection

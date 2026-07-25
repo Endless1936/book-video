@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { failWorkflowStep } from "./workflow-state.mjs";
 
 const DIAGNOSTIC_PATH = path.join("tmp", "last-workflow-diagnostic.json");
 let installed = false;
@@ -75,6 +76,16 @@ export function reportWorkflowFailure(error, context = {}) {
   const root = context.root || process.cwd();
   const childDiagnostic = readWorkflowDiagnostic(root);
   if (childDiagnostic && childDiagnostic.command !== diagnostic.command) {
+    try {
+      failWorkflowStep(context.episodeDir, context.workflowStep, {
+        ...childDiagnostic,
+        parentFailure: {
+          command: diagnostic.command,
+          stage: diagnostic.stage,
+          error: diagnostic.error,
+        },
+      });
+    } catch {}
     console.error(diagnostic.error);
     console.error(`BOOK_VIDEO_DIAGNOSTIC ${JSON.stringify({
       ...childDiagnostic,
@@ -94,6 +105,9 @@ export function reportWorkflowFailure(error, context = {}) {
   } catch (writeError) {
     diagnostic.details.diagnosticWriteError = writeError.message;
   }
+  try {
+    failWorkflowStep(context.episodeDir, context.workflowStep, diagnostic);
+  } catch {}
   console.error(diagnostic.error);
   console.error(`BOOK_VIDEO_DIAGNOSTIC ${JSON.stringify({
     ...diagnostic,

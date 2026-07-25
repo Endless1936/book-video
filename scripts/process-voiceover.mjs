@@ -1,22 +1,13 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import path, { dirname, resolve } from 'node:path';
 import { mkdirSync, renameSync, rmSync } from 'node:fs';
 import { validateVoiceoverArtifact } from './lib/media-validation.mjs';
 import { WorkflowError, installWorkflowDiagnostics } from './lib/workflow-diagnostics.mjs';
+import { beginWorkflowStep, completeWorkflowStep } from './lib/workflow-state.mjs';
 
 const ROOT = process.cwd();
-installWorkflowDiagnostics({
-  root: ROOT,
-  command: 'node scripts/process-voiceover.mjs',
-  stage: 'voiceover_processing',
-  nextActions: [
-    'Inspect the input audio path and the ffmpeg failure details.',
-    'Repair or replace the source audio, then rerun the same preset.',
-    'Do not replace the previous processed voiceover until the new output validates.',
-  ],
-});
 
 const presets = {
   story: [
@@ -38,6 +29,30 @@ function usage() {
 }
 
 const [, , inputArg, outputArg, presetArg = 'story'] = process.argv;
+const output = outputArg ? resolve(outputArg) : '';
+const episodesRoot = path.join(ROOT, 'episodes');
+const outputRelativeToEpisodes = output ? path.relative(episodesRoot, output) : '';
+const outputParts = outputRelativeToEpisodes.split(path.sep);
+const tracksWorkflowVoice =
+  output
+  && outputParts.length >= 3
+  && !outputRelativeToEpisodes.startsWith(`..${path.sep}`)
+  && !path.isAbsolute(outputRelativeToEpisodes)
+  && path.basename(output) === 'body-voiceover.mp3';
+const episodeDir = tracksWorkflowVoice ? path.join(episodesRoot, outputParts[0]) : '';
+
+installWorkflowDiagnostics({
+  root: ROOT,
+  command: 'node scripts/process-voiceover.mjs',
+  stage: 'voiceover_processing',
+  episodeDir,
+  workflowStep: tracksWorkflowVoice ? 'voiced' : '',
+  nextActions: [
+    'Inspect the input audio path and the ffmpeg failure details.',
+    'Repair or replace the source audio, then rerun the same preset.',
+    'Do not replace the previous processed voiceover until the new output validates.',
+  ],
+});
 
 if (!inputArg || !outputArg || !presets[presetArg]) {
   usage();
@@ -47,9 +62,9 @@ if (!inputArg || !outputArg || !presets[presetArg]) {
 }
 
 const input = resolve(inputArg);
-const output = resolve(outputArg);
 const candidateOutput = `${output}.${process.pid}.tmp.mp3`;
 mkdirSync(dirname(output), { recursive: true });
+if (tracksWorkflowVoice) beginWorkflowStep(episodeDir, 'voiced');
 
 const args = [
   '-y',
@@ -75,6 +90,7 @@ try {
   }
   validateVoiceoverArtifact(candidateOutput);
   renameSync(candidateOutput, output);
+  if (tracksWorkflowVoice) completeWorkflowStep(episodeDir, 'voiced');
 } finally {
   rmSync(candidateOutput, { force: true });
 }
