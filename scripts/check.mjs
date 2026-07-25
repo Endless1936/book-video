@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { discoverScriptFiles } from "./lib/script-discovery.mjs";
 import { installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
@@ -19,52 +20,7 @@ installWorkflowDiagnostics({
 });
 const HYPERFRAMES_VERSION = "0.7.33";
 const requiredCommands = ["ffmpeg", "ffprobe", "npx"];
-const scriptFiles = [
-  "scripts/init.mjs",
-  "scripts/download-whisper-model.mjs",
-  "scripts/record-book-candidates.mjs",
-  "scripts/create-body-timings.mjs",
-  "scripts/create-episode-preview.mjs",
-  "scripts/process-voiceover.mjs",
-  "scripts/render-episode-final.mjs",
-  "scripts/validate-script.mjs",
-  "scripts/workflow-state.mjs",
-  "scripts/lib/body-timings.mjs",
-  "scripts/lib/csv.mjs",
-  "scripts/lib/episode-slug.mjs",
-  "scripts/lib/env.mjs",
-  "scripts/lib/media-validation.mjs",
-  "scripts/lib/production-report.mjs",
-  "scripts/lib/script-policy.mjs",
-  "scripts/lib/script-version.mjs",
-  "scripts/lib/title-normalization.mjs",
-  "scripts/lib/weread-request.mjs",
-  "scripts/lib/workflow-diagnostics.mjs",
-  "scripts/lib/workflow-state.mjs",
-  "scripts/tests/test-body-timings.mjs",
-  "scripts/tests/test-csv.mjs",
-  "scripts/tests/smoke-timing-fallback.mjs",
-  "scripts/tests/test-media-validation.mjs",
-  "scripts/tests/test-process-voiceover.mjs",
-  "scripts/tests/test-production-report.mjs",
-  "scripts/tests/test-script-version.mjs",
-  "scripts/tests/test-title-normalization.mjs",
-  "scripts/tests/test-workflow-diagnostics.mjs",
-  "scripts/tests/test-workflow-state.mjs",
-];
-
-const testFiles = [
-  "scripts/tests/test-csv.mjs",
-  "scripts/tests/test-script-version.mjs",
-  "scripts/tests/test-title-normalization.mjs",
-  "scripts/tests/test-env.mjs",
-  "scripts/tests/test-body-timings.mjs",
-  "scripts/tests/test-media-validation.mjs",
-  "scripts/tests/test-process-voiceover.mjs",
-  "scripts/tests/test-production-report.mjs",
-  "scripts/tests/test-workflow-diagnostics.mjs",
-  "scripts/tests/test-workflow-state.mjs",
-];
+const scriptFiles = discoverScriptFiles(ROOT);
 
 function commandArgs(command) {
   if (command === "ffmpeg") return ["-hide_banner", "-h"];
@@ -97,10 +53,8 @@ if (
   throw new Error("Default intro book list must contain exactly six books with authors");
 }
 
-for (const file of testFiles) {
-  const result = run(process.execPath, [file]);
-  if (result.status !== 0) throw new Error(`Test failed: ${file}${result.stderr ? `\n${result.stderr}` : ""}`);
-}
+const tests = run(process.execPath, ["scripts/run-tests.mjs"], ROOT, { stdio: "inherit" });
+if (tests.status !== 0) throw new Error("Repository tests failed");
 
 const templateSourceDir = path.join(ROOT, "templates", "shared-video-template", "intro");
 const templateDir = fs.mkdtempSync(path.join(os.tmpdir(), "book-video-hyperframes-check-"));

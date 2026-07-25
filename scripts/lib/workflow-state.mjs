@@ -2,13 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { readCsv } from "./csv.mjs";
-import { fingerprintFile, isFileFingerprintCurrent } from "./media-validation.mjs";
+import {
+  fingerprintFile,
+  isFileFingerprintCurrent,
+  probeMedia,
+  validateVoiceoverArtifact,
+} from "./media-validation.mjs";
 import { resolveScriptVersion } from "./script-version.mjs";
 import { validateBodyScript } from "./script-policy.mjs";
 
 export const WORKFLOW_STEPS = Object.freeze([
-  "selected",
-  "researched",
+  "book_ready",
   "script_validated",
   "script_approved",
   "illustrated",
@@ -20,9 +24,8 @@ export const WORKFLOW_STEPS = Object.freeze([
 ]);
 
 export const WORKFLOW_DEPENDENCIES = Object.freeze({
-  selected: [],
-  researched: ["selected"],
-  script_validated: ["researched"],
+  book_ready: [],
+  script_validated: ["book_ready"],
   script_approved: ["script_validated"],
   illustrated: ["script_approved"],
   voiced: ["script_approved"],
@@ -48,19 +51,17 @@ function createStep() {
     attempts: 0,
     inputFingerprint: null,
     outputFingerprint: null,
-    activeArtifactValid: false,
     startedAt: null,
     completedAt: null,
     updatedAt: null,
     diagnostic: null,
     lastValid: null,
-    inferred: false,
   };
 }
 
 export function createWorkflowState(episodeDir, now = new Date().toISOString()) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     episode: path.basename(episodeDir),
     steps: Object.fromEntries(WORKFLOW_STEPS.map((step) => [step, createStep()])),
     createdAt: now,
@@ -70,15 +71,20 @@ export function createWorkflowState(episodeDir, now = new Date().toISOString()) 
 }
 
 function normalizeState(state, episodeDir) {
-  if (!state || state.schemaVersion !== 1 || typeof state.steps !== "object") {
+  if (!state || ![1, 2].includes(state.schemaVersion) || typeof state.steps !== "object") {
     throw new Error("Unsupported or malformed workflow state");
   }
+  const stepDefaults = createStep();
+  const normalizeStep = (value = {}) => Object.fromEntries(
+    Object.keys(stepDefaults).map((key) => [key, key in value ? value[key] : stepDefaults[key]]),
+  );
   return {
     ...createWorkflowState(episodeDir, state.createdAt),
     ...state,
+    schemaVersion: 2,
     episode: path.basename(episodeDir),
     steps: Object.fromEntries(
-      WORKFLOW_STEPS.map((step) => [step, { ...createStep(), ...(state.steps[step] || {}) }]),
+      WORKFLOW_STEPS.map((step) => [step, normalizeStep(state.steps[step])]),
     ),
   };
 }
@@ -127,6 +133,39 @@ function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch {
     return null;
+  }
+}
+
+function validPngArtifact(filePath) {
+  try {
+    const header = fs.readFileSync(filePath).subarray(0, 24);
+    return header.length === 24
+      && header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+      && header.subarray(12, 16).toString("ascii") === "IHDR"
+      && header.readUInt32BE(16) > 0
+      && header.readUInt32BE(20) > 0;
+  } catch {
+    return false;
+  }
+}
+
+function validVoiceArtifact(filePath) {
+  try {
+    validateVoiceoverArtifact(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validRenderArtifact(filePath) {
+  try {
+    const media = probeMedia(filePath);
+    const video = media.streams?.some((stream) => stream.codec_type === "video");
+    const audio = media.streams?.some((stream) => stream.codec_type === "audio");
+    return Boolean(video && audio && Number(media.format?.duration || 0) > 0);
+  } catch {
+    return false;
   }
 }
 
@@ -183,20 +222,37 @@ function renderRelativePath(episodeDir) {
   return typeof report?.output === "string" ? report.output : "";
 }
 
+function timingAudioPath(episodeDir, timings = readJson(path.join(episodeDir, "audio", "body-timings.json"))) {
+  const defaultPath = path.join(episodeDir, "audio", "body-voiceover.mp3");
+  if (!timings?.audio) return defaultPath;
+  return path.resolve(episodeDir, "..", "..", timings.audio);
+}
+
+function reportVerified(report) {
+  const checks = report?.agentReview?.checks;
+  return Boolean(
+    report?.verified === true
+    && report?.agentReview?.status === "passed"
+    && checks?.noBlankFrames === true
+    && checks?.noPlaceholderText === true
+    && checks?.noSubtitleOverflow === true,
+  );
+}
+
 function inputTargets(episodeDir, step) {
   const report = readReport(episodeDir);
+  const timings = readJson(path.join(episodeDir, "audio", "body-timings.json"));
   const repositoryRoot = path.resolve(episodeDir, "..", "..");
   const bgm = report?.inputArtifacts?.bgm?.path
     ? path.resolve(repositoryRoot, report.inputArtifacts.bgm.path)
     : report?.bgm ? path.join("..", "..", "assets", "bgm", report.bgm) : "";
   const targets = {
-    selected: [],
-    researched: ["brief.json"],
+    book_ready: [],
     script_validated: ["brief.json", "script.csv"],
     script_approved: ["script.csv"],
     illustrated: ["script.csv", "prompts.csv"],
     voiced: ["script.csv"],
-    timed: ["script.csv", path.join("audio", "body-voiceover.mp3")],
+    timed: ["script.csv", timingAudioPath(episodeDir, timings)],
     rendered: [
       "script.csv",
       "prompts.csv",
@@ -216,8 +272,7 @@ function inputTargets(episodeDir, step) {
 
 function outputTargets(episodeDir, step) {
   const targets = {
-    selected: ["brief.json"],
-    researched: ["brief.json"],
+    book_ready: ["brief.json"],
     script_validated: ["script.csv"],
     script_approved: ["script-approval.json"],
     illustrated: ["prompts.csv", ...REQUIRED_IMAGES.map((name) => path.join("images", name))],
@@ -244,26 +299,19 @@ function assessArtifacts(episodeDir, step) {
   const voicePath = path.join(episodeDir, "audio", "body-voiceover.mp3");
   const timings = readJson(path.join(episodeDir, "audio", "body-timings.json"));
   const report = readReport(episodeDir);
+  const delivery = readJson(path.join(episodeDir, "delivery.json"));
   const renderPath = renderRelativePath(episodeDir);
   const renderFile = renderPath ? path.join(episodeDir, renderPath) : "";
   const scriptPath = path.join(episodeDir, "script.csv");
   const scriptApproval = readJson(path.join(episodeDir, "script-approval.json"));
-  const delivery = readJson(path.join(episodeDir, "delivery.json"));
 
-  if (step === "selected") {
+  if (step === "book_ready") {
     const valid = Boolean(
       brief
       && String(brief.display_title || brief.displayTitle || brief.title || "").trim()
-      && String(brief.author || "").trim(),
-    );
-    return { valid, trust: "strong", quality: "pass" };
-  }
-
-  if (step === "researched") {
-    const valid = Boolean(
-      brief
+      && String(brief.author || "").trim()
       && String(brief.source_channel || brief.source || brief.provenance || "").trim()
-      && String(brief.edition_status || brief.edition || brief.version_status || "").trim(),
+      && String(brief.edition_status || brief.edition || brief.version_status || "").trim()
     );
     return { valid, trust: "strong", quality: "pass" };
   }
@@ -291,23 +339,23 @@ function assessArtifacts(episodeDir, step) {
   }
 
   if (step === "illustrated") {
-    const valid = REQUIRED_IMAGES.every((name) => {
-      const filePath = path.join(episodeDir, "images", name);
-      return fs.existsSync(filePath) && fs.statSync(filePath).size > 0;
-    });
+    const valid = REQUIRED_IMAGES.every(
+      (name) => validPngArtifact(path.join(episodeDir, "images", name)),
+    );
     return { valid, trust: "weak", quality: "review_required" };
   }
 
   if (step === "voiced") {
-    const valid = fs.existsSync(voicePath) && fs.statSync(voicePath).size >= 1024;
+    const valid = validVoiceArtifact(voicePath);
     return { valid, trust: "weak", quality: "review_required" };
   }
 
   if (step === "timed") {
+    const timingVoice = timingAudioPath(episodeDir, timings);
     const valid = Boolean(
       timings
       && timings.scriptVersion === version
-      && isFileFingerprintCurrent(voicePath, timings.audioFingerprint)
+      && isFileFingerprintCurrent(timingVoice, timings.audioFingerprint)
       && Array.isArray(timings.captions)
       && timings.captions.length > 0,
     );
@@ -323,22 +371,21 @@ function assessArtifacts(episodeDir, step) {
       report?.technicalChecks?.passed
       && report.scriptVersion === version
       && renderFile
-      && fs.existsSync(renderFile)
-      && fs.statSync(renderFile).size > 0,
+      && validRenderArtifact(renderFile),
     );
     return { valid, trust: "weak", quality: valid ? "review_required" : null };
   }
 
   if (step === "verified") {
-    const valid = Boolean(report?.verified === true && report?.agentReview?.status !== "pending");
+    const valid = reportVerified(report);
     return { valid, trust: "strong", quality: valid ? "pass" : null };
   }
 
   if (step === "delivered") {
     const valid = Boolean(
-      delivery
-      && delivery.output === renderPath
-      && isFileFingerprintCurrent(renderFile, delivery.renderFingerprint),
+      reportVerified(report)
+      && delivery?.render === renderPath
+      && isFileFingerprintCurrent(renderFile, delivery?.renderFingerprint),
     );
     return { valid, trust: "strong", quality: valid ? "pass" : null };
   }
@@ -357,19 +404,60 @@ function usableStep(step, episodeDir, value) {
   return fingerprintMatches(step, episodeDir, value.lastValid);
 }
 
-function inferredValidStep(previous, assessment, inputFingerprint, outputFingerprint, now) {
+function validStepFromArtifacts(previous, assessment, inputFingerprint, outputFingerprint, now) {
   return {
     ...previous,
     status: "valid",
     quality: assessment.quality,
     inputFingerprint,
     outputFingerprint,
-    activeArtifactValid: true,
     completedAt: previous.completedAt || now,
     updatedAt: now,
     diagnostic: null,
-    inferred: true,
   };
+}
+
+function dependenciesForStep(episodeDir, step, override) {
+  if (override) return override;
+  if (step === "timed") {
+    const timings = readJson(path.join(episodeDir, "audio", "body-timings.json"));
+    const defaultVoice = path.join(episodeDir, "audio", "body-voiceover.mp3");
+    if (timings?.audio && path.resolve(timingAudioPath(episodeDir, timings)) !== path.resolve(defaultVoice)) {
+      return ["script_approved"];
+    }
+  }
+  return WORKFLOW_DEPENDENCIES[step];
+}
+
+function refreshDependencyStatuses(episodeDir, steps, now) {
+  const nextSteps = { ...steps };
+  for (const step of WORKFLOW_STEPS) {
+    const dependencies = dependenciesForStep(episodeDir, step);
+    if (dependencies.length === 0) continue;
+    const dependenciesReady = dependencies.every(
+      (dependency) => usableStep(dependency, episodeDir, nextSteps[dependency]),
+    );
+    if (!dependenciesReady && nextSteps[step].status === "valid") {
+      nextSteps[step] = {
+        ...nextSteps[step],
+        status: "stale",
+        updatedAt: now,
+      };
+    }
+  }
+  for (const step of WORKFLOW_STEPS) {
+    const value = nextSteps[step];
+    if (!["pending", "ready"].includes(value.status)) continue;
+    const dependenciesReady = dependenciesForStep(episodeDir, step).every(
+      (dependency) => usableStep(dependency, episodeDir, nextSteps[dependency]),
+    );
+    nextSteps[step] = {
+      ...value,
+      status: dependenciesReady ? "ready" : "pending",
+      updatedAt: value.updatedAt || now,
+    };
+  }
+  return nextSteps;
 }
 
 export function reconcileWorkflowState(episodeDir, { now = new Date().toISOString(), write = true } = {}) {
@@ -385,10 +473,7 @@ export function reconcileWorkflowState(episodeDir, { now = new Date().toISOStrin
       previous.inputFingerprint === inputFingerprint
       && previous.outputFingerprint === outputFingerprint;
     const lastValidMatches = fingerprintMatches(step, episodeDir, previous.lastValid);
-    let next = {
-      ...previous,
-      activeArtifactValid: currentSnapshotMatches || lastValidMatches,
-    };
+    let next = { ...previous };
 
     const runningSince = Date.parse(previous.startedAt || "");
     if (
@@ -409,41 +494,47 @@ export function reconcileWorkflowState(episodeDir, { now = new Date().toISOStrin
         updatedAt: now,
       };
     } else if (previous.status === "valid" && !currentSnapshotMatches) {
-      next = {
-        ...next,
-        status: "stale",
-        activeArtifactValid: false,
-        updatedAt: now,
-      };
+      next = assessment.valid && (
+        assessment.trust === "strong"
+        || outputFingerprint !== previous.outputFingerprint
+      )
+        ? validStepFromArtifacts(previous, assessment, inputFingerprint, outputFingerprint, now)
+        : {
+            ...next,
+            status: "stale",
+            updatedAt: now,
+          };
     } else if (
       assessment.valid
       && assessment.trust === "strong"
       && !["running", "needs_attention"].includes(previous.status)
     ) {
-      next = inferredValidStep(previous, assessment, inputFingerprint, outputFingerprint, now);
+      next = validStepFromArtifacts(previous, assessment, inputFingerprint, outputFingerprint, now);
     } else if (
       assessment.valid
       && assessment.trust === "strong"
       && previous.status === "needs_attention"
       && !lastValidMatches
     ) {
-      next = inferredValidStep(previous, assessment, inputFingerprint, outputFingerprint, now);
+      next = validStepFromArtifacts(previous, assessment, inputFingerprint, outputFingerprint, now);
     } else if (
       assessment.valid
       && assessment.trust === "weak"
-      && ["pending", "ready"].includes(previous.status)
+      && (
+        ["pending", "ready"].includes(previous.status)
+        || (previous.status === "stale" && outputFingerprint !== previous.outputFingerprint)
+        || (previous.status === "needs_attention" && !lastValidMatches)
+      )
     ) {
-      next = inferredValidStep(previous, assessment, inputFingerprint, outputFingerprint, now);
+      next = validStepFromArtifacts(previous, assessment, inputFingerprint, outputFingerprint, now);
     } else if (
       previous.status === "valid"
       && !assessment.valid
       && step !== "script_approved"
-      && step !== "delivered"
     ) {
       next = {
         ...next,
         status: "stale",
-        activeArtifactValid: false,
         updatedAt: now,
       };
     }
@@ -451,45 +542,9 @@ export function reconcileWorkflowState(episodeDir, { now = new Date().toISOStrin
     steps[step] = next;
   }
 
-  for (const step of WORKFLOW_STEPS) {
-    if (WORKFLOW_DEPENDENCIES[step].length === 0) continue;
-    const dependenciesReady = WORKFLOW_DEPENDENCIES[step].every(
-      (dependency) => usableStep(dependency, episodeDir, steps[dependency]),
-    );
-    if (dependenciesReady) continue;
-    const value = steps[step];
-    if (value.status === "valid") {
-      steps[step] = {
-        ...value,
-        status: "stale",
-        activeArtifactValid: false,
-        updatedAt: now,
-      };
-    } else if (value.status === "needs_attention" && value.activeArtifactValid) {
-      steps[step] = {
-        ...value,
-        activeArtifactValid: false,
-        updatedAt: now,
-      };
-    }
-  }
-
-  for (const step of WORKFLOW_STEPS) {
-    const value = steps[step];
-    if (!["pending", "ready"].includes(value.status)) continue;
-    const dependenciesReady = WORKFLOW_DEPENDENCIES[step].every(
-      (dependency) => usableStep(dependency, episodeDir, steps[dependency]),
-    );
-    steps[step] = {
-      ...value,
-      status: dependenciesReady ? "ready" : "pending",
-      updatedAt: value.updatedAt || now,
-    };
-  }
-
   const nextState = {
     ...state,
-    steps,
+    steps: refreshDependencyStatuses(episodeDir, steps, now),
     updatedAt: now,
     reconciledAt: now,
   };
@@ -506,21 +561,35 @@ function validSnapshot(value) {
   };
 }
 
-export function beginWorkflowStep(episodeDir, step, { now = new Date().toISOString() } = {}) {
+export function beginWorkflowStep(
+  episodeDir,
+  step,
+  { dependencies, enforceDependencies = false, now = new Date().toISOString() } = {},
+) {
   if (!WORKFLOW_STEPS.includes(step)) throw new Error(`Unknown workflow step: ${step}`);
-  const state = reconcileWorkflowState(episodeDir, { now });
+  const state = reconcileWorkflowState(episodeDir, { now, write: false });
+  if (enforceDependencies) {
+    const missing = dependenciesForStep(episodeDir, step, dependencies).filter(
+      (dependency) => !usableStep(dependency, episodeDir, state.steps[dependency]),
+    );
+    if (missing.length) {
+      const error = new Error(`${step} requires valid steps: ${missing.join(", ")}`);
+      error.code = "workflow_dependency_missing";
+      error.recoverable = true;
+      error.nextActions = [`Complete or repair: ${missing.join(", ")}.`, `Retry ${step}.`];
+      throw error;
+    }
+  }
   const current = state.steps[step];
   const lastValid = current.status === "valid" ? validSnapshot(current) : current.lastValid;
   state.steps[step] = {
     ...current,
     status: "running",
     attempts: current.attempts + 1,
-    activeArtifactValid: Boolean(lastValid && fingerprintMatches(step, episodeDir, lastValid)),
     startedAt: now,
     updatedAt: now,
     diagnostic: null,
     lastValid,
-    inferred: false,
   };
   state.updatedAt = now;
   writeWorkflowState(episodeDir, state);
@@ -530,15 +599,21 @@ export function beginWorkflowStep(episodeDir, step, { now = new Date().toISOStri
 export function completeWorkflowStep(
   episodeDir,
   step,
-  { quality = "", details = {}, enforceDependencies = false, now = new Date().toISOString() } = {},
+  { dependencies, quality = "", enforceDependencies = false, now = new Date().toISOString() } = {},
 ) {
   if (!WORKFLOW_STEPS.includes(step)) throw new Error(`Unknown workflow step: ${step}`);
-  const state = reconcileWorkflowState(episodeDir, { now });
+  const state = reconcileWorkflowState(episodeDir, { now, write: false });
   if (enforceDependencies) {
-    const missing = WORKFLOW_DEPENDENCIES[step].filter(
+    const missing = dependenciesForStep(episodeDir, step, dependencies).filter(
       (dependency) => !usableStep(dependency, episodeDir, state.steps[dependency]),
     );
-    if (missing.length) throw new Error(`${step} requires valid steps: ${missing.join(", ")}`);
+    if (missing.length) {
+      const error = new Error(`${step} requires valid steps: ${missing.join(", ")}`);
+      error.code = "workflow_dependency_missing";
+      error.recoverable = true;
+      error.nextActions = [`Complete or repair: ${missing.join(", ")}.`, `Retry ${step}.`];
+      throw error;
+    }
   }
   if (step === "script_approved") {
     const scriptPath = path.join(episodeDir, "script.csv");
@@ -550,11 +625,15 @@ export function completeWorkflowStep(
     });
   }
   if (step === "delivered") {
-    const output = renderRelativePath(episodeDir);
-    const renderFile = path.join(episodeDir, output);
+    const report = readReport(episodeDir);
+    const renderPath = renderRelativePath(episodeDir);
+    const renderFile = renderPath ? path.join(episodeDir, renderPath) : "";
+    if (!reportVerified(report) || !renderFile || !fs.existsSync(renderFile)) {
+      throw new Error("Verified render is required before delivery");
+    }
     writeJsonAtomic(path.join(episodeDir, "delivery.json"), {
       schemaVersion: 1,
-      output,
+      render: renderPath,
       renderFingerprint: fingerprintFile(renderFile),
       deliveredAt: now,
     });
@@ -566,21 +645,20 @@ export function completeWorkflowStep(
   const current = state.steps[step];
   state.steps[step] = {
     ...current,
-    ...details,
     status: "valid",
     quality: quality || assessment.quality || "pass",
     inputFingerprint: workflowInputFingerprint(episodeDir, step),
     outputFingerprint: workflowOutputFingerprint(episodeDir, step),
-    activeArtifactValid: true,
     startedAt: null,
     completedAt: now,
     updatedAt: now,
     diagnostic: null,
-    inferred: false,
   };
+  state.steps = refreshDependencyStatuses(episodeDir, state.steps, now);
   state.updatedAt = now;
+  state.reconciledAt = now;
   writeWorkflowState(episodeDir, state);
-  return reconcileWorkflowState(episodeDir, { now });
+  return state;
 }
 
 export function failWorkflowStep(
@@ -590,18 +668,40 @@ export function failWorkflowStep(
   { now = new Date().toISOString() } = {},
 ) {
   if (!episodeDir || !WORKFLOW_STEPS.includes(step)) return null;
-  const state = reconcileWorkflowState(episodeDir, { now });
+  const state = reconcileWorkflowState(episodeDir, { now, write: false });
   const current = state.steps[step];
+  if (diagnostic?.code === "workflow_dependency_missing") {
+    if (current.status !== "running") return state;
+    const restored = fingerprintMatches(step, episodeDir, current.lastValid);
+    state.steps[step] = restored
+      ? {
+          ...current,
+          ...current.lastValid,
+          status: "valid",
+          startedAt: null,
+          updatedAt: now,
+          diagnostic: null,
+        }
+      : {
+          ...current,
+          status: current.lastValid ? "stale" : "pending",
+          startedAt: null,
+          updatedAt: now,
+          diagnostic: null,
+        };
+    state.steps = refreshDependencyStatuses(episodeDir, state.steps, now);
+    state.updatedAt = now;
+    writeWorkflowState(episodeDir, state);
+    return state;
+  }
   const lastValid = current.status === "valid" ? validSnapshot(current) : current.lastValid;
   state.steps[step] = {
     ...current,
     status: "needs_attention",
-    activeArtifactValid: Boolean(lastValid && fingerprintMatches(step, episodeDir, lastValid)),
     startedAt: null,
     updatedAt: now,
     diagnostic,
     lastValid,
-    inferred: false,
   };
   state.updatedAt = now;
   writeWorkflowState(episodeDir, state);
@@ -614,20 +714,26 @@ export function workflowNextActions(episodeDir, state = reconcileWorkflowState(e
     .map((step) => ({
       step,
       action: "diagnose_and_retry",
-      activeArtifactValid: state.steps[step].activeArtifactValid,
+      activeArtifactValid: fingerprintMatches(step, episodeDir, state.steps[step].lastValid),
       diagnostic: state.steps[step].diagnostic,
     }));
   const ready = WORKFLOW_STEPS
     .filter((step) => state.steps[step].status === "ready")
     .map((step) => ({ step, action: "run" }));
-  const review = WORKFLOW_STEPS
-    .filter((step) => state.steps[step].status === "valid" && state.steps[step].quality === "review_required")
+  const verified = usableStep("verified", episodeDir, state.steps.verified);
+  const rendered = usableStep("rendered", episodeDir, state.steps.rendered);
+  const reviewSteps = verified
+    ? []
+    : rendered
+      ? ["rendered"]
+      : WORKFLOW_STEPS.filter((step) => ["review_required", "degraded"].includes(state.steps[step].quality));
+  const review = reviewSteps
+    .filter((step) => state.steps[step].status === "valid")
     .map((step) => ({ step, action: "review" }));
-  return [...attention, ...ready, ...review];
+  return [...attention, ...review, ...ready];
 }
 
-export function workflowSummary(episodeDir) {
-  const state = reconcileWorkflowState(episodeDir);
+export function workflowSummary(episodeDir, state = reconcileWorkflowState(episodeDir)) {
   return {
     schemaVersion: state.schemaVersion,
     episode: state.episode,
@@ -638,7 +744,10 @@ export function workflowSummary(episodeDir) {
           status: value.status,
           quality: value.quality,
           attempts: value.attempts,
-          activeArtifactValid: value.activeArtifactValid,
+          activeArtifactValid:
+            value.status === "valid"
+            ? fingerprintMatches(step, episodeDir, value)
+            : fingerprintMatches(step, episodeDir, value.lastValid),
           error: value.diagnostic?.error || null,
         }];
       }),

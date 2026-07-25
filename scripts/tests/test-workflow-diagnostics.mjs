@@ -34,6 +34,7 @@ const workflowEntrypoints = [
   "process-voiceover.mjs",
   "record-book-candidates.mjs",
   "render-episode-final.mjs",
+  "run-tests.mjs",
   "validate-script.mjs",
   "workflow-state.mjs",
 ];

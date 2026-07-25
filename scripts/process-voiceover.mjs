@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import path, { dirname, resolve } from 'node:path';
-import { mkdirSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { validateVoiceoverArtifact } from './lib/media-validation.mjs';
 import { WorkflowError, installWorkflowDiagnostics } from './lib/workflow-diagnostics.mjs';
 import { beginWorkflowStep, completeWorkflowStep } from './lib/workflow-state.mjs';
@@ -31,7 +31,24 @@ function usage() {
 const [, , inputArg, outputArg, presetArg = 'story'] = process.argv;
 const output = outputArg ? resolve(outputArg) : '';
 const episodesRoot = path.join(ROOT, 'episodes');
-const outputRelativeToEpisodes = output ? path.relative(episodesRoot, output) : '';
+const canonicalPath = (filePath) => {
+  if (!filePath) return '';
+  try {
+    return path.join(realpathSync.native(dirname(filePath)), path.basename(filePath));
+  } catch {
+    return filePath;
+  }
+};
+const canonicalEpisodesRoot = (() => {
+  try {
+    return realpathSync.native(episodesRoot);
+  } catch {
+    return episodesRoot;
+  }
+})();
+const outputRelativeToEpisodes = output
+  ? path.relative(canonicalEpisodesRoot, canonicalPath(output))
+  : '';
 const outputParts = outputRelativeToEpisodes.split(path.sep);
 const tracksWorkflowVoice =
   output
@@ -63,8 +80,9 @@ if (!inputArg || !outputArg || !presets[presetArg]) {
 
 const input = resolve(inputArg);
 const candidateOutput = `${output}.${process.pid}.tmp.mp3`;
+const previousOutput = `${output}.${process.pid}.previous.mp3`;
 mkdirSync(dirname(output), { recursive: true });
-if (tracksWorkflowVoice) beginWorkflowStep(episodeDir, 'voiced');
+if (tracksWorkflowVoice) beginWorkflowStep(episodeDir, 'voiced', { enforceDependencies: true });
 
 const args = [
   '-y',
@@ -89,10 +107,20 @@ try {
     });
   }
   validateVoiceoverArtifact(candidateOutput);
-  renameSync(candidateOutput, output);
-  if (tracksWorkflowVoice) completeWorkflowStep(episodeDir, 'voiced');
+  if (existsSync(output)) renameSync(output, previousOutput);
+  try {
+    renameSync(candidateOutput, output);
+    if (tracksWorkflowVoice) completeWorkflowStep(episodeDir, 'voiced', { enforceDependencies: true });
+    rmSync(previousOutput, { force: true });
+  } catch (error) {
+    rmSync(output, { force: true });
+    if (existsSync(previousOutput)) renameSync(previousOutput, output);
+    throw error;
+  }
 } finally {
   rmSync(candidateOutput, { force: true });
+  if (existsSync(previousOutput) && !existsSync(output)) renameSync(previousOutput, output);
+  rmSync(previousOutput, { force: true });
 }
 
 console.log(`Processed voiceover with "${presetArg}" preset: ${output}`);

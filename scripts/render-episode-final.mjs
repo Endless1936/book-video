@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { readCsv } from "./lib/csv.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { fingerprintFile, isFileFingerprintCurrent, probeMedia } from "./lib/media-validation.mjs";
-import { buildProductionReport, writeProductionReport } from "./lib/production-report.mjs";
+import { buildProductionReport } from "./lib/production-report.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 import { beginWorkflowStep, completeWorkflowStep } from "./lib/workflow-state.mjs";
@@ -49,7 +49,7 @@ if (!episodeName) {
   });
 }
 if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
-beginWorkflowStep(episodeDir, "rendered");
+beginWorkflowStep(episodeDir, "rendered", { enforceDependencies: true });
 
 function chooseRandomBgm() {
   const bgmDir = path.join(ROOT, "assets", "bgm");
@@ -118,13 +118,52 @@ function run(command, args, options = {}) {
   return result;
 }
 
-function activateFinalRender(candidatePath, destinationPath) {
+function activateFinalRender(candidatePath, destinationPath, report) {
   fs.mkdirSync(rendersDir, { recursive: true });
-  fs.renameSync(candidatePath, destinationPath);
+  const reportPath = path.join(episodeDir, "production-report.json");
+  const reportCandidate = `${reportPath}.${process.pid}.candidate`;
+  const previousRender = `${destinationPath}.${process.pid}.previous`;
+  const previousReport = `${reportPath}.${process.pid}.previous`;
+  fs.writeFileSync(reportCandidate, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+  if (fs.existsSync(destinationPath)) fs.renameSync(destinationPath, previousRender);
+  if (fs.existsSync(reportPath)) fs.renameSync(reportPath, previousReport);
+  try {
+    fs.renameSync(candidatePath, destinationPath);
+    fs.renameSync(reportCandidate, reportPath);
+    completeWorkflowStep(episodeDir, "rendered", {
+      enforceDependencies: true,
+      quality: "review_required",
+    });
+    fs.rmSync(previousRender, { force: true });
+    fs.rmSync(previousReport, { force: true });
+  } catch (error) {
+    fs.rmSync(destinationPath, { force: true });
+    fs.rmSync(reportPath, { force: true });
+    if (fs.existsSync(previousRender)) fs.renameSync(previousRender, destinationPath);
+    if (fs.existsSync(previousReport)) fs.renameSync(previousReport, reportPath);
+    throw error;
+  } finally {
+    fs.rmSync(reportCandidate, { force: true });
+    if (fs.existsSync(previousRender) && !fs.existsSync(destinationPath)) {
+      fs.renameSync(previousRender, destinationPath);
+    }
+    if (fs.existsSync(previousReport) && !fs.existsSync(reportPath)) {
+      fs.renameSync(previousReport, reportPath);
+    }
+    fs.rmSync(previousRender, { force: true });
+    fs.rmSync(previousReport, { force: true });
+  }
   for (const entry of fs.readdirSync(rendersDir, { withFileTypes: true })) {
     const entryPath = path.join(rendersDir, entry.name);
-    if (entry.isFile() && entryPath !== destinationPath) fs.rmSync(entryPath, { force: true });
+    if (entry.isFile() && entryPath !== destinationPath) {
+      try {
+        fs.rmSync(entryPath, { force: true });
+      } catch (error) {
+        console.warn(`Could not remove old render ${entryPath}: ${error.message}`);
+      }
+    }
   }
+  return reportPath;
 }
 
 function getBgmPath(input) {
@@ -303,9 +342,7 @@ const report = buildProductionReport({
   },
   allowOver60Seconds: ALLOW_OVER_60_SECONDS,
 });
-const reportPath = writeProductionReport(episodeDir, report);
-activateFinalRender(candidateOutputPath, outputPath);
-completeWorkflowStep(episodeDir, "rendered", { quality: "review_required" });
+const reportPath = activateFinalRender(candidateOutputPath, outputPath, report);
 fs.rmSync(previewDir, { recursive: true, force: true });
 console.log(`Production report: ${reportPath}`);
 console.log(outputPath);

@@ -95,14 +95,19 @@ let requestedVersion = "";
 if (rawArgs[0] && !rawArgs[0].startsWith("--")) requestedVersion = rawArgs.shift();
 const { positional, options } = readOptions(rawArgs);
 if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
-beginWorkflowStep(episodeDir, "timed");
 const scriptVersion = resolveScriptVersion(episodeDir, requestedVersion);
 const audioDir = path.join(episodeDir, "audio");
 const scriptPath = path.join(episodeDir, "script.csv");
-const voicePath = path.resolve(ROOT, positional[0] || path.join("episodes", episodeName, "audio", "body-voiceover.mp3"));
+const defaultVoicePath = path.join(episodeDir, "audio", "body-voiceover.mp3");
+const voicePath = path.resolve(ROOT, positional[0] || defaultVoicePath);
+const workflowDependencies = voicePath === path.resolve(defaultVoicePath) ? undefined : ["script_approved"];
 const asrDir = path.join(audioDir, "asr");
 const asrBase = path.join(asrDir, "body");
 const timingsPath = path.join(audioDir, "body-timings.json");
+beginWorkflowStep(episodeDir, "timed", {
+  dependencies: workflowDependencies,
+  enforceDependencies: true,
+});
 
 if (!fs.existsSync(scriptPath)) throw new Error(`Missing script.csv: ${scriptPath}`);
 const voiceover = validateVoiceoverArtifact(voicePath, { notBefore: options.voiceoverNotBefore });
@@ -193,11 +198,28 @@ const timings = {
     captions,
 };
 const temporaryTimingsPath = `${timingsPath}.${process.pid}.tmp`;
+const previousTimingsPath = `${timingsPath}.${process.pid}.previous`;
 fs.writeFileSync(temporaryTimingsPath, `${JSON.stringify(timings, null, 2)}\n`, { mode: 0o600 });
-fs.renameSync(temporaryTimingsPath, timingsPath);
-completeWorkflowStep(episodeDir, "timed", {
-  quality: alignment.requiresAgentReview ? "degraded" : "pass",
-});
+if (fs.existsSync(timingsPath)) fs.renameSync(timingsPath, previousTimingsPath);
+try {
+  fs.renameSync(temporaryTimingsPath, timingsPath);
+  completeWorkflowStep(episodeDir, "timed", {
+    dependencies: workflowDependencies,
+    enforceDependencies: true,
+    quality: alignment.requiresAgentReview ? "degraded" : "pass",
+  });
+  fs.rmSync(previousTimingsPath, { force: true });
+} catch (error) {
+  fs.rmSync(timingsPath, { force: true });
+  if (fs.existsSync(previousTimingsPath)) fs.renameSync(previousTimingsPath, timingsPath);
+  throw error;
+} finally {
+  fs.rmSync(temporaryTimingsPath, { force: true });
+  if (fs.existsSync(previousTimingsPath) && !fs.existsSync(timingsPath)) {
+    fs.renameSync(previousTimingsPath, timingsPath);
+  }
+  fs.rmSync(previousTimingsPath, { force: true });
+}
 
 console.log(`ASR JSON: ${path.relative(ROOT, `${asrBase}.json`)}`);
 console.log(`Body timings: ${path.relative(ROOT, timingsPath)}`);

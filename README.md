@@ -21,7 +21,7 @@ Copyright (c) 2026 prototech, endless, and 未济.
 
 脚本失败不会成为无提示的死路。命令会保留非零退出以阻止坏产物生效，同时输出 `BOOK_VIDEO_DIAGNOSTIC` 并保存到 `tmp/last-workflow-diagnostic.json`。Codex 会据此检查输入或依赖、修复后重试最小失败步骤；旧的有效成片在新候选通过前不会被替换。
 
-每期制作还会在本地维护 `episodes/<书名>/workflow-state.json`。它按产物依赖记录可执行、有效、降级、待诊断和过期状态，不设置终止失败；文件缺失或损坏时可从现有产物重建。使用 `npm run workflow -- status "<书名>"` 查看状态，使用 `npm run workflow -- next "<书名>"` 查看下一步，使用 `npm run workflow -- repair "<书名>"` 重新核对产物。
+每期制作还会在本地维护 `episodes/<书名>/workflow-state.json`。它按产物依赖记录可执行、有效、降级、待诊断和过期状态，不设置终止失败；文件缺失或损坏时可从现有产物重建。使用 `npm run workflow -- status "<书名>"` 查看状态，使用 `npm run workflow -- next "<书名>"` 查看下一步，使用 `npm run workflow -- repair "<书名>"` 重新核对产物；文案确认使用 `approve`，对话内嵌入成片后使用 `deliver`，其他步骤从产物与校验报告自动识别。
 
 你也可以直接用自然语言操作，例如：
 
