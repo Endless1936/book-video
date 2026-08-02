@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process"; import { resolveCommandInvocation } from "./lib/command-invocation.mjs";
 import { discoverScriptFiles } from "./lib/script-discovery.mjs";
 import { installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
@@ -29,7 +29,7 @@ function commandArgs(command) {
 }
 
 function run(command, args, cwd = ROOT, options = {}) {
-  return spawnSync(command, args, { cwd, encoding: "utf8", shell: false, ...options });
+  const invocation = resolveCommandInvocation(command, args); return spawnSync(invocation.command, invocation.args, { cwd, encoding: "utf8", shell: false, ...options });
 }
 
 function requireCommand(command) {
