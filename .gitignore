@@ -13,9 +13,6 @@ data/.book-pipeline-backup-*.csv
 assets/reference-videos/*
 !assets/reference-videos/文案与共鸣分析.md
 assets/models/
-# Personal voice-cloning reference stays local.
-assets/template-audio/audio-ref.mp3
-
 # Local episode outputs
 episodes/*
 !episodes/README.md
