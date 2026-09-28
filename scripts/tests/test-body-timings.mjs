@@ -14,7 +14,7 @@ assert.deepEqual(segments, [
   { start: 2.6, end: 3.7 },
   { start: 4.4, end: 5.5 },
 ]);
-assert.deepEqual(buildCaptionTimings([1, 2], segments, 1), [
+assert.deepEqual(buildCaptionTimings([1, 2], segments.slice(1)), [
   { order: 1, start: 2.6, end: 3.7 },
   { order: 2, start: 4.4, end: 5.5 },
 ]);
@@ -26,7 +26,7 @@ assert.deepEqual(coalesceSpeechSegments([
   { start: 0.4, end: 1.9 },
   { start: 2.6, end: 4.6 },
 ]);
-assert.throws(() => buildCaptionTimings([1, 2, 3], segments, 1), /Speech segment count mismatch/);
+assert.throws(() => buildCaptionTimings([1, 2, 3], segments.slice(1)), /Speech segment count mismatch/);
 assert.deepEqual(
   buildEstimatedCaptionTimings(
     [
@@ -35,7 +35,6 @@ assert.deepEqual(
     ],
     [{ start: 1, end: 3 }],
     3,
-    0,
   ),
   [
     { order: 1, start: 1, end: 2 },

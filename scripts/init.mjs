@@ -24,6 +24,7 @@ const WHISPER_MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-
 const MIN_WHISPER_MODEL_BYTES = 100 * 1024 * 1024;
 const HYPERFRAMES_VERSION = "0.7.33";
 const WEREAD_SKILLS_URL = "https://weread.qq.com/r/weread-skills";
+const CONFIGURE_WEREAD = process.argv.includes("--configure-weread");
 
 function commandAvailable(command) {
   const args = command === "ffmpeg" ? ["-hide_banner", "-h"] : command === "ffprobe" ? ["-version"] : ["--version"];
@@ -99,10 +100,15 @@ async function main() {
   }
   let wereadConfigured = Boolean(getWereadApiKey());
   if (!wereadConfigured) {
-    console.log(`请打开微信读书 Skills 官网获取 API Key：${WEREAD_SKILLS_URL}`);
-    const key = await readHidden("请输入微信读书 API Key（输入内容不会显示）：");
-    if (key) writeEnvKey(key);
-    else if (input.isTTY) console.log("未配置 API Key，将使用公开资料模式。");
+    if (CONFIGURE_WEREAD) {
+      console.log(`请先在浏览器完成登录并获取 API Key：${WEREAD_SKILLS_URL}`);
+      const key = await readHidden("请输入微信读书 API Key（输入内容不会显示）：");
+      if (key) writeEnvKey(key);
+      else if (input.isTTY) console.log("未配置 API Key，将使用公开资料模式。");
+      else console.log("API Key 输入需要交互式本地终端；请在本地 TTY 重新运行 node scripts/init.mjs --configure-weread。");
+    } else {
+      console.log("未配置微信读书 API Key；初始化继续使用公开资料模式。获得用户同意后，可运行 node scripts/init.mjs --configure-weread 安全录入。");
+    }
   }
   wereadConfigured = Boolean(getWereadApiKey());
 

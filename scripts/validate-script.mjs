@@ -40,8 +40,12 @@ const rows = readCsv(scriptPath).rows
   .filter((row) => row.version === version)
   .sort((a, b) => Number(a.order) - Number(b.order));
 if (!rows.length) throw new Error(`No script rows found for version ${version}`);
+const briefPath = path.join(episodeDir, "brief.json");
+const brief = fs.existsSync(briefPath) ? JSON.parse(fs.readFileSync(briefPath, "utf8")) : {};
+const episodeTitle = String(brief.display_title || brief.displayTitle || brief.title || "").trim();
+if (!episodeTitle) throw new Error(`Missing display_title in ${briefPath}`);
 
-const result = { episode: episodeName, scriptVersion: version, ...validateBodyScript(rows) };
+const result = { episode: episodeName, scriptVersion: version, ...validateBodyScript(rows, { episodeTitle }) };
 console.log(JSON.stringify(result, null, 2));
 if (result.errors.length) {
   throw new WorkflowError(result.errors.join("；"), {

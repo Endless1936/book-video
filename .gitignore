@@ -9,9 +9,12 @@
 data/book-pipeline.csv
 data/.book-pipeline-backup-*.csv
 
-# Do not publish downloaded reference videos or large local models
-assets/reference-videos/
+# Keep only the consolidated text reference; downloaded videos stay out of Git.
+assets/reference-videos/*
+!assets/reference-videos/文案与共鸣分析.md
 assets/models/
+# Personal voice-cloning reference stays local.
+assets/template-audio/audio-ref.mp3
 
 # Local episode outputs
 episodes/*

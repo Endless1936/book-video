@@ -4,9 +4,10 @@ import { spawnSync } from "node:child_process";
 import { buildEstimatedCaptionTimings } from "./lib/body-timings.mjs";
 import { readCsv } from "./lib/csv.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
-import { isFileFingerprintCurrent } from "./lib/media-validation.mjs";
+import { resolvePreviewBodyTimings } from "./lib/preview-body-timings.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
+import { assertRenderTimingPreflight } from "./lib/workflow-state.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
@@ -31,6 +32,7 @@ if (!episodeName) {
 }
 
 const episodeDir = path.join(ROOT, "episodes", episodeName);
+assertRenderTimingPreflight(episodeDir);
 const version = resolveScriptVersion(episodeDir, requestedVersion);
 const briefPath = path.join(episodeDir, "brief.json");
 const scriptPath = path.join(episodeDir, "script.csv");
@@ -134,7 +136,7 @@ function createIntro(brief) {
   copyFile(path.join(imagesDir, "result-bridge.png"), path.join(introDir, "media", "pages", "result.png"));
 }
 
-function readOptionalBodyTimings(version) {
+function readOptionalBodyTimings(version, rows) {
   const fallbackDuration = readAudioDuration(bodyVoicePath);
   if (!fs.existsSync(audioTimingsPath)) {
     if (fallbackDuration) console.warn("Missing body-timings.json; using script duration hints for captions");
@@ -147,25 +149,15 @@ function readOptionalBodyTimings(version) {
     console.warn(`Could not read body-timings.json; using script duration hints: ${error.message}`);
     return fallbackDuration ? { duration: fallbackDuration, byOrder: new Map() } : null;
   }
-  if (raw.scriptVersion && raw.scriptVersion !== version) {
-    console.warn(`Ignoring body timings for ${raw.scriptVersion}; using script duration hints for ${version}`);
-    return fallbackDuration ? { duration: fallbackDuration, byOrder: new Map() } : null;
-  }
-  if (!isFileFingerprintCurrent(bodyVoicePath, raw.audioFingerprint)) {
-    console.warn("Ignoring body timings because the voiceover changed or has no fingerprint; using script duration hints");
-    return fallbackDuration ? { duration: fallbackDuration, byOrder: new Map() } : null;
-  }
-  if (raw.alignment?.requiresAgentReview) {
-    console.warn(
-      `Body timings need Agent review (${raw.alignment.method || "unknown method"}): `
-      + `${raw.alignment.reason || "low-confidence ASR alignment"}`,
-    );
-  }
-  const byOrder = new Map((raw.captions || []).map((item) => [Number(item.order), item]));
-  return {
-    duration: Number(raw.duration) || fallbackDuration,
-    byOrder,
-  };
+  const resolved = resolvePreviewBodyTimings(raw, {
+    version,
+    scriptPath,
+    voicePath: bodyVoicePath,
+    expectedOrders: rows.map((row) => row.order),
+    fallbackDuration,
+  });
+  if (resolved.warning) console.warn(resolved.warning);
+  return resolved.timings;
 }
 
 function readAudioDuration(filePath) {
@@ -339,10 +331,10 @@ const rows = readCsv(scriptPath).rows
 if (!rows.length) {
   throw new Error(`No script rows found for version ${version}`);
 }
-const scriptValidation = validateBodyScript(rows);
+const scriptValidation = validateBodyScript(rows, { episodeTitle: getDisplayTitle(brief) });
 if (scriptValidation.errors.length) throw new Error(scriptValidation.errors.join("；"));
 
 createIntro(brief);
-createBody(brief, rows, readOptionalBodyTimings(version));
+createBody(brief, rows, readOptionalBodyTimings(version, rows));
 
 console.log(workDir);

@@ -7,10 +7,33 @@ import { fingerprintFile } from "../lib/media-validation.mjs";
 import {
   beginWorkflowStep,
   completeWorkflowStep,
+  assertRenderTimingPreflight,
   failWorkflowStep,
   reconcileWorkflowState,
+  revalidateWorkflowStep,
   workflowNextActions,
 } from "../lib/workflow-state.mjs";
+import { validateBodyScript } from "../lib/script-policy.mjs";
+
+assert.deepEqual(validateBodyScript([
+  { order: "1", text: "第一句" },
+  { order: "2", text: "第二句" },
+]).errors, []);
+assert.deepEqual(validateBodyScript([
+  { order: "1", text: "《测试书》" },
+  { order: "2", text: "第一句" },
+], { episodeTitle: "测试书" }).errors, []);
+assert.match(validateBodyScript([
+  { order: "1", text: "第一句" },
+  { order: "2", text: "第二句" },
+], { episodeTitle: "测试书" }).errors.join("；"), /第一行必须是书名/u);
+for (const rows of [
+  [{ order: "1", text: "第一句" }, { order: "1", text: "第二句" }],
+  [{ order: "1", text: "第一句" }, { order: "3", text: "第二句" }],
+  [{ order: "1.5", text: "第一句" }],
+]) {
+  assert.match(validateBodyScript(rows).errors.join("；"), /order 必须唯一且连续/u);
+}
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "book-video-workflow-state-"));
 const episodeDir = path.join(root, "episodes", "测试书");
@@ -37,7 +60,7 @@ fs.writeFileSync(path.join(episodeDir, "brief.json"), JSON.stringify({
 }));
 fs.writeFileSync(
   path.join(episodeDir, "script.csv"),
-  "version,order,text,duration_hint\nA,1,第一句,2\nA,2,第二句,2\n",
+  "version,order,text,duration_hint\nA,1,《测试书》,2\nA,2,第一句,2\nA,3,第二句,2\n",
 );
 fs.writeFileSync(path.join(episodeDir, "workflow-state.json"), JSON.stringify({
   schemaVersion: 1,
@@ -86,7 +109,7 @@ fs.writeFileSync(timingsPath, JSON.stringify({
   audio: path.relative(root, externalVoicePath),
   audioFingerprint: fingerprintFile(externalVoicePath),
   alignment: { method: "external", requiresAgentReview: true },
-  captions: [{ order: 1, start: 0, end: 2 }],
+  captions: [{ order: 1, start: 0, end: 0.4 }, { order: 2, start: 0.4, end: 1.2 }, { order: 3, start: 1.2, end: 2 }],
 }));
 state = reconcileWorkflowState(episodeDir);
 assert.equal(state.steps.voiced.status, "ready");
@@ -120,6 +143,12 @@ runFfmpeg([
 ]);
 state = reconcileWorkflowState(episodeDir);
 assert.equal(state.steps.voiced.status, "valid");
+runFfmpeg([
+  "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100:duration=2",
+  "-codec:a", "libmp3lame", "-b:a", "96k", voicePath,
+]);
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.voiced.status, "valid", "manual voice episodes remain valid when no generated intro pair exists");
 
 fs.writeFileSync(timingsPath, JSON.stringify({
   scriptVersion: "A",
@@ -128,7 +157,7 @@ fs.writeFileSync(timingsPath, JSON.stringify({
     method: "speech-duration-estimate",
     requiresAgentReview: true,
   },
-  captions: [{ order: 1, start: 0, end: 2 }],
+  captions: [{ order: 1, start: 0, end: 0.4 }, { order: 2, start: 0.4, end: 1.2 }, { order: 3, start: 1.2, end: 2 }],
 }));
 state = reconcileWorkflowState(episodeDir);
 assert.equal(state.steps.timed.status, "valid");
@@ -137,6 +166,150 @@ assert.equal(
   workflowNextActions(episodeDir, state).some((action) => action.step === "timed" && action.action === "review"),
   true,
 );
+fs.writeFileSync(timingsPath, JSON.stringify({
+  scriptVersion: "A",
+  audioFingerprint: fingerprintFile(voicePath),
+  alignment: { method: "silence-segments", requiresAgentReview: false },
+  captions: [{ order: 1, start: 0, end: 2 }],
+}));
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.timed.status, "stale", "timings must cover every current script row");
+fs.writeFileSync(timingsPath, JSON.stringify({
+  scriptVersion: "A",
+  audioFingerprint: fingerprintFile(voicePath),
+  alignment: { method: "silence-segments", requiresAgentReview: false },
+  captions: [{ order: 1, start: 0, end: 0.4 }, { order: 2, start: 0.4, end: 1.2 }, { order: 3, start: 1.2, end: 2 }],
+}));
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.timed.status, "valid");
+
+const writeTimingCaptions = (captions) => fs.writeFileSync(timingsPath, JSON.stringify({
+  scriptVersion: "A",
+  audioFingerprint: fingerprintFile(voicePath),
+  alignment: { method: "silence-segments", requiresAgentReview: false },
+  captions,
+}));
+const malformedCaptions = [
+  [{ order: 1, start: null, end: 0.4 }, { order: 2, start: 0.4, end: 1.2 }, { order: 3, start: 1.2, end: 2 }],
+  [{ order: 1, start: -0.1, end: 0.4 }, { order: 2, start: 0.4, end: 1.2 }, { order: 3, start: 1.2, end: 2 }],
+  [{ order: 1, start: 0, end: 0.4 }, { order: 2, start: 0.4, end: 1.2 }, { order: 3, start: 1.2, end: 1.2 }],
+  [{ order: 1, start: 0.4, end: 0.8 }, { order: 2, start: 0, end: 1.2 }, { order: 3, start: 1.2, end: 2 }],
+  [{ order: 1, start: 0, end: 1.8 }, { order: 2, start: 1, end: 1.5 }, { order: 3, start: 1.5, end: 2 }],
+  [{ order: 1, start: "0", end: 0.4 }, { order: 2, start: 0.4, end: 1.2 }, { order: 3, start: 1.2, end: 2 }],
+];
+for (const captions of malformedCaptions) {
+  writeTimingCaptions(captions);
+  state = reconcileWorkflowState(episodeDir);
+  assert.equal(state.steps.timed.status, "stale", "invalid or backward timing must be stale");
+}
+fs.writeFileSync(timingsPath, "{broken");
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.timed.status, "stale", "malformed timing JSON must be stale");
+writeTimingCaptions([
+  { order: 1, start: 0, end: 0.5 },
+  { order: 2, start: 0.5, end: 1.4 },
+  { order: 3, start: 1.4, end: 2 },
+]);
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.timed.status, "valid", "monotonic overlapping captions remain valid");
+
+const lastSuccessfulTimings = fs.readFileSync(timingsPath);
+beginWorkflowStep(episodeDir, "timed");
+assert.throws(
+  () => assertRenderTimingPreflight(episodeDir),
+  (error) => error.code === "workflow_render_preflight_blocked"
+    && error.details.diagnosticCode === "timing_generation_in_progress",
+);
+const runningNextActions = workflowNextActions(episodeDir);
+assert.equal(runningNextActions.some((action) => action.step === "rendered" && action.action === "run"), false);
+assert.equal(runningNextActions.some((action) => action.step === "rendered" && action.action === "blocked"), true);
+const runningWorkflowNext = spawnSync(
+  process.execPath,
+  [path.resolve("scripts/workflow-state.mjs"), "next", "测试书"],
+  { cwd: root, encoding: "utf8", shell: false },
+);
+assert.equal(runningWorkflowNext.status, 0, runningWorkflowNext.stderr);
+const runningActions = JSON.parse(runningWorkflowNext.stdout).nextActions;
+assert.equal(runningActions.some((action) => action.step === "rendered" && action.action === "run"), false);
+assert.equal(runningActions.some((action) => action.step === "rendered" && action.action === "blocked"), true);
+for (const scriptName of ["render-episode-final.mjs", "create-episode-preview.mjs"]) {
+  const result = spawnSync(
+    process.execPath,
+    [path.resolve("scripts", scriptName), "测试书"],
+    { cwd: root, encoding: "utf8", shell: false },
+  );
+  assert.notEqual(result.status, 0, `${scriptName} must wait while timing is running`);
+  assert.match(result.stderr, /Timing generation is still running/u);
+}
+state = failWorkflowStep(episodeDir, "timed", {
+  code: "voiceover_script_alignment_failed",
+  error: "Voiceover does not match the approved script",
+  recoverable: true,
+  details: { scriptVersion: "A", alignment: { issues: [{ message: "row 2 mismatch" }] } },
+  nextActions: ["Replace the voiceover and rerun timing generation."],
+});
+assert.deepEqual(fs.readFileSync(timingsPath), lastSuccessfulTimings, "failed alignment must preserve the prior timings file");
+assert.throws(
+  () => assertRenderTimingPreflight(episodeDir),
+  (error) => error.code === "workflow_render_preflight_blocked"
+    && error.details.diagnosticCode === "voiceover_script_alignment_failed",
+);
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.timed.status, "needs_attention");
+assert.equal(state.steps.timed.diagnostic.code, "voiceover_script_alignment_failed");
+const workflowNext = spawnSync(
+  process.execPath,
+  [path.resolve("scripts/workflow-state.mjs"), "next", "测试书"],
+  { cwd: root, encoding: "utf8", shell: false },
+);
+assert.equal(workflowNext.status, 0, workflowNext.stderr);
+const nextActions = JSON.parse(workflowNext.stdout).nextActions;
+assert.equal(nextActions.some((action) => action.step === "rendered" && action.action === "run"), false);
+assert.equal(nextActions.some((action) => action.step === "rendered" && action.action === "blocked"), true);
+assert.throws(
+  () => beginWorkflowStep(episodeDir, "rendered", { enforceDependencies: true }),
+  (error) => error.code === "workflow_render_preflight_blocked"
+    && error.details.diagnosticCode === "voiceover_script_alignment_failed",
+);
+for (const scriptName of ["render-episode-final.mjs", "create-episode-preview.mjs"]) {
+  const result = spawnSync(
+    process.execPath,
+    [path.resolve("scripts", scriptName), "测试书"],
+    { cwd: root, encoding: "utf8", shell: false },
+  );
+  assert.notEqual(result.status, 0, `${scriptName} must stop after alignment mismatch`);
+  assert.match(result.stderr, /last voiceover failed script alignment/u);
+}
+assert.deepEqual(fs.readFileSync(timingsPath), lastSuccessfulTimings, "render preflight must leave prior timings intact");
+assert.equal(fs.readdirSync(rendersDir).length, 0, "blocked render must not create a render artifact");
+
+const degradedTimings = JSON.parse(lastSuccessfulTimings.toString("utf8"));
+degradedTimings.alignment.requiresAgentReview = true;
+fs.writeFileSync(timingsPath, JSON.stringify(degradedTimings));
+beginWorkflowStep(episodeDir, "timed");
+state = completeWorkflowStep(episodeDir, "timed", { quality: "degraded" });
+assert.equal(state.steps.timed.quality, "degraded");
+assert.equal(state.steps.timed.diagnostic, null, "successful timing generation clears the alignment failure diagnostic");
+assert.doesNotThrow(() => assertRenderTimingPreflight(episodeDir));
+assert.equal(workflowNextActions(episodeDir, state).some((action) => action.step === "rendered" && action.action === "blocked"), false);
+assert.equal(workflowNextActions(episodeDir, state).some((action) => action.step === "rendered" && action.action === "run"), true);
+const recoveredWorkflowNext = spawnSync(
+  process.execPath,
+  [path.resolve("scripts/workflow-state.mjs"), "next", "测试书"],
+  { cwd: root, encoding: "utf8", shell: false },
+);
+assert.equal(recoveredWorkflowNext.status, 0, recoveredWorkflowNext.stderr);
+assert.equal(
+  JSON.parse(recoveredWorkflowNext.stdout).nextActions.some((action) => action.step === "rendered" && action.action === "run"),
+  true,
+);
+fs.rmSync(timingsPath);
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.timed.status, "stale");
+assert.doesNotThrow(() => assertRenderTimingPreflight(episodeDir));
+fs.writeFileSync(timingsPath, lastSuccessfulTimings);
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.timed.status, "valid");
 
 state = beginWorkflowStep(episodeDir, "voiced");
 state = failWorkflowStep(episodeDir, "voiced", {
@@ -217,6 +390,31 @@ state = reconcileWorkflowState(episodeDir);
 assert.equal(state.steps.delivered.status, "valid");
 assert.equal(workflowNextActions(episodeDir, state).length, 0);
 
+const generatedIntroPath = path.join(audioDir, "intro-voiceover.generated.wav");
+const generatedIntroManifestPath = path.join(audioDir, "intro-voiceover.generated.json");
+runFfmpeg([
+  "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1",
+  "-c:a", "pcm_s16le", generatedIntroPath,
+]);
+fs.writeFileSync(generatedIntroManifestPath, JSON.stringify({ test: "generated intro fingerprint" }));
+state = completeWorkflowStep(episodeDir, "voiced");
+state = completeWorkflowStep(episodeDir, "rendered", { enforceDependencies: true });
+runFfmpeg([
+  "-f", "lavfi", "-i", "sine=frequency=550:sample_rate=48000:duration=1",
+  "-c:a", "pcm_s16le", generatedIntroPath,
+]);
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.voiced.status, "stale", "editing a generated intro must stale the weak-trust voiced step");
+assert.equal(state.steps.rendered.status, "stale", "editing a generated intro must stale the render that selected it");
+state = completeWorkflowStep(episodeDir, "voiced");
+state = completeWorkflowStep(episodeDir, "rendered", { enforceDependencies: true });
+fs.writeFileSync(generatedIntroManifestPath, JSON.stringify({ test: "edited generated intro manifest" }));
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.voiced.status, "stale", "editing the generated intro manifest must stale the voiced step");
+assert.equal(state.steps.rendered.status, "stale", "editing the selected intro manifest must stale the render");
+fs.rmSync(generatedIntroPath);
+fs.rmSync(generatedIntroManifestPath);
+
 fs.writeFileSync(path.join(episodeDir, "workflow-state.json"), "{broken");
 state = reconcileWorkflowState(episodeDir);
 assert.equal(state.steps.book_ready.status, "valid");
@@ -229,13 +427,85 @@ assert.equal(
   true,
 );
 
-fs.appendFileSync(path.join(episodeDir, "script.csv"), "A,3,第三句,2\n");
+fs.appendFileSync(path.join(episodeDir, "script.csv"), "A,4,第三句,2\n");
 state = reconcileWorkflowState(episodeDir);
 assert.equal(state.steps.script_validated.status, "valid");
 for (const step of ["script_approved", "illustrated", "voiced", "timed", "rendered", "verified", "delivered"]) {
   assert.equal(state.steps[step].status, "stale", `${step} should be stale after script changes`);
 }
 assert.equal(fs.existsSync(renderPath), true);
+
+const reviewEvidence = "illustrated@A:逐张检查 4/4 张图片，并确认每张均适配当前稿";
+const voiceReviewEvidence = "voiced@A:逐句核听 4/4 行，并确认全部与当前稿逐行一致";
+const revalidateWithoutApproval = spawnSync(
+  process.execPath,
+  [path.resolve("scripts/workflow-state.mjs"), "revalidate", "测试书", "illustrated", "--evidence", reviewEvidence],
+  { cwd: root, encoding: "utf8", shell: false },
+);
+assert.notEqual(revalidateWithoutApproval.status, 0);
+assert.match(revalidateWithoutApproval.stderr, /current validated and approved script/u);
+assert.throws(
+  () => revalidateWorkflowStep(episodeDir, "voiced", { evidence: voiceReviewEvidence }),
+  /current validated and approved script/u,
+);
+
+const reapproveScript = spawnSync(
+  process.execPath,
+  [path.resolve("scripts/workflow-state.mjs"), "approve", "测试书"],
+  { cwd: root, encoding: "utf8", shell: false },
+);
+assert.equal(reapproveScript.status, 0, reapproveScript.stderr);
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.illustrated.status, "stale");
+assert.equal(state.steps.voiced.status, "stale");
+for (const invalidEvidence of [
+  reviewEvidence,
+  "voiced@old:逐句核听 3/3 行，并确认全部与当前稿逐行一致",
+  "voiced@A:检查过音频",
+  "voiced@A:逐句核听 2/3 行，并确认全部与当前稿逐行一致",
+]) {
+  assert.throws(
+    () => revalidateWorkflowStep(episodeDir, "voiced", { evidence: invalidEvidence }),
+    /does not match the voiced review/u,
+  );
+}
+
+const promptsPath = path.join(episodeDir, "prompts.csv");
+const savedPromptsPath = path.join(episodeDir, "prompts.csv.saved");
+fs.renameSync(promptsPath, savedPromptsPath);
+const revalidateMissingOutput = spawnSync(
+  process.execPath,
+  [path.resolve("scripts/workflow-state.mjs"), "revalidate", "测试书", "illustrated", "--evidence", reviewEvidence],
+  { cwd: root, encoding: "utf8", shell: false },
+);
+assert.notEqual(revalidateMissingOutput.status, 0);
+assert.match(revalidateMissingOutput.stderr, /outputs for illustrated are missing or invalid/u);
+fs.renameSync(savedPromptsPath, promptsPath);
+
+for (const step of ["illustrated", "voiced"]) {
+  const evidence = step === "voiced" ? voiceReviewEvidence : reviewEvidence;
+  const result = spawnSync(
+    process.execPath,
+    [path.resolve("scripts/workflow-state.mjs"), "revalidate", "测试书", step, "--evidence", evidence],
+    { cwd: root, encoding: "utf8", shell: false },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.steps[step].status, "valid");
+  assert.equal(summary.steps[step].revalidation.step, step);
+  assert.equal(summary.steps[step].revalidation.scriptVersion, "A");
+  assert.equal(summary.steps[step].revalidation.checkedCount, step === "voiced" ? 4 : 4);
+  assert.equal(summary.steps[step].revalidation.evidence, evidence);
+}
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.illustrated.status, "valid");
+assert.equal(state.steps.voiced.status, "valid");
+assert.equal(state.steps.timed.status, "stale", "old three-line timing must not validate against the new four-line script");
+
+fs.writeFileSync(path.join(episodeDir, "script.csv"),
+  "version,order,text,duration_hint\nA,1,《测试书》,2\nA,2,重复序号,2\nA,2,第三句,2\nA,4,第四句,2\n");
+state = reconcileWorkflowState(episodeDir);
+assert.equal(state.steps.script_validated.status, "stale", "duplicate order values must invalidate script validation");
 
 fs.rmSync(root, { recursive: true, force: true });
 console.log("workflow state tests: ok");

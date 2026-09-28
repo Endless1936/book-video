@@ -30,6 +30,13 @@ try {
     () => validateVoiceoverArtifact(file, { probe: () => ({ streams: [], format: { duration: "0" } }) }),
     /no audio stream/u,
   );
+
+  const script = path.join(directory, "script.csv");
+  fs.writeFileSync(script, "version,order,text\nv1,1,原始文案\n");
+  const scriptSnapshot = fingerprintFile(script);
+  assert.equal(isFileFingerprintCurrent(script, scriptSnapshot), true);
+  fs.writeFileSync(script, "version,order,text\nv1,1,修改后的文案\n");
+  assert.equal(isFileFingerprintCurrent(script, scriptSnapshot), false, "a script edit during timing generation invalidates the captured snapshot");
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });
 }

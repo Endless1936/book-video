@@ -56,6 +56,7 @@ function createStep() {
     updatedAt: null,
     diagnostic: null,
     lastValid: null,
+    revalidation: null,
   };
 }
 
@@ -113,6 +114,51 @@ function readStateForReconcile(episodeDir) {
 
 export function readWorkflowState(episodeDir) {
   return normalizeState(JSON.parse(fs.readFileSync(statePath(episodeDir), "utf8")), episodeDir);
+}
+
+function renderTimingBlocker(episodeDir) {
+  try {
+    const timed = readWorkflowState(episodeDir).steps.timed;
+    if (timed.status === "running") {
+      return {
+        code: "timing_generation_in_progress",
+        error: "Timing generation is still running; wait for it to finish before rendering.",
+        timedStatus: timed.status,
+        nextActions: ["Wait for timing generation to finish, then retry preview or render."],
+      };
+    }
+    if (
+      timed.status === "needs_attention"
+      && timed.diagnostic?.code === "voiceover_script_alignment_failed"
+    ) {
+      return {
+        code: timed.diagnostic.code,
+        error: "Rendering is blocked because the last voiceover failed script alignment; rerun timing generation successfully first.",
+        timedStatus: timed.status,
+        details: timed.diagnostic.details || {},
+        nextActions: timed.diagnostic.nextActions,
+      };
+    }
+  } catch {}
+  return null;
+}
+
+export function assertRenderTimingPreflight(episodeDir) {
+  const blocker = renderTimingBlocker(episodeDir);
+  if (!blocker) return;
+  const error = new Error(blocker.error || "Rendering is blocked by the timed step.");
+  error.code = "workflow_render_preflight_blocked";
+  error.details = {
+    blockedBy: "timed",
+    timedStatus: blocker.timedStatus || "needs_attention",
+    diagnosticCode: blocker.code || "voiceover_script_alignment_failed",
+    ...(blocker.details || {}),
+  };
+  error.nextActions = blocker.nextActions || [
+    "Review the voiceover against every current script row.",
+    "Replace or regenerate the voiceover, then rerun timing generation successfully.",
+  ];
+  throw error;
 }
 
 export function writeWorkflowState(episodeDir, state) {
@@ -222,6 +268,17 @@ function renderRelativePath(episodeDir) {
   return typeof report?.output === "string" ? report.output : "";
 }
 
+function generatedIntroTargets(episodeDir) {
+  const audioDir = path.join(episodeDir, "audio");
+  const introPath = path.join(audioDir, "intro-voiceover.generated.wav");
+  const manifestPath = path.join(audioDir, "intro-voiceover.generated.json");
+  if (!fs.existsSync(introPath) || !fs.existsSync(manifestPath)) return [];
+  return [
+    path.join("audio", path.basename(introPath)),
+    path.join("audio", path.basename(manifestPath)),
+  ];
+}
+
 function timingAudioPath(episodeDir, timings = readJson(path.join(episodeDir, "audio", "body-timings.json"))) {
   const defaultPath = path.join(episodeDir, "audio", "body-voiceover.mp3");
   if (!timings?.audio) return defaultPath;
@@ -251,13 +308,17 @@ function inputTargets(episodeDir, step) {
     script_validated: ["brief.json", "script.csv"],
     script_approved: ["script.csv"],
     illustrated: ["script.csv", "prompts.csv"],
-    voiced: ["script.csv"],
+    // Generated intro artifacts are optional provenance inputs: their absence
+    // leaves manual voice episodes unchanged, while edits to a generated pair
+    // invalidate the weak-trust voice step until it is explicitly completed.
+    voiced: ["script.csv", ...generatedIntroTargets(episodeDir)],
     timed: ["script.csv", timingAudioPath(episodeDir, timings)],
     rendered: [
       "script.csv",
       "prompts.csv",
       "images",
       path.join("audio", "body-voiceover.mp3"),
+      ...generatedIntroTargets(episodeDir),
       path.join("audio", "body-timings.json"),
       path.join("..", "..", "templates", "shared-video-template"),
       path.join("..", "..", "assets", "template-audio"),
@@ -276,7 +337,7 @@ function outputTargets(episodeDir, step) {
     script_validated: ["script.csv"],
     script_approved: ["script-approval.json"],
     illustrated: ["prompts.csv", ...REQUIRED_IMAGES.map((name) => path.join("images", name))],
-    voiced: [path.join("audio", "body-voiceover.mp3")],
+    voiced: [path.join("audio", "body-voiceover.mp3"), ...generatedIntroTargets(episodeDir)],
     timed: [path.join("audio", "body-timings.json")],
     rendered: [renderRelativePath(episodeDir)].filter(Boolean),
     verified: ["production-report.json"],
@@ -322,7 +383,10 @@ function assessArtifacts(episodeDir, step) {
       const rows = readCsv(scriptPath).rows
         .filter((row) => row.version === version)
         .sort((left, right) => Number(left.order) - Number(right.order));
-      const valid = rows.length > 0 && validateBodyScript(rows).errors.length === 0;
+      const episodeTitle = String(brief?.display_title || brief?.displayTitle || brief?.title || "").trim();
+      const valid = rows.length > 0
+        && Boolean(episodeTitle)
+        && validateBodyScript(rows, { episodeTitle }).errors.length === 0;
       return { valid, trust: "strong", quality: valid ? "pass" : null };
     } catch {
       return { valid: false, trust: "strong", quality: null };
@@ -341,7 +405,7 @@ function assessArtifacts(episodeDir, step) {
   if (step === "illustrated") {
     const valid = REQUIRED_IMAGES.every(
       (name) => validPngArtifact(path.join(episodeDir, "images", name)),
-    );
+    ) && fs.existsSync(path.join(episodeDir, "prompts.csv"));
     return { valid, trust: "weak", quality: "review_required" };
   }
 
@@ -352,12 +416,37 @@ function assessArtifacts(episodeDir, step) {
 
   if (step === "timed") {
     const timingVoice = timingAudioPath(episodeDir, timings);
+    let scriptOrders = [];
+    try {
+      scriptOrders = readCsv(scriptPath).rows
+        .filter((row) => row.version === version)
+        .sort((left, right) => Number(left.order) - Number(right.order))
+        .map((row) => Number(row.order));
+    } catch {}
+    const captionsMatchScript = scriptOrders.length > 0
+      && Array.isArray(timings?.captions)
+      && timings.captions.length === scriptOrders.length
+      && timings.captions.every((caption, index) => Number(caption.order) === scriptOrders[index]);
+    const captionsHaveValidChronology = captionsMatchScript
+      && timings.captions.every((caption, index) => {
+        if (
+          typeof caption.start !== "number"
+          || !Number.isFinite(caption.start)
+          || caption.start < 0
+          || typeof caption.end !== "number"
+          || !Number.isFinite(caption.end)
+          || caption.end < 0
+          || caption.start >= caption.end
+        ) return false;
+        if (index === 0) return true;
+        const previous = timings.captions[index - 1];
+        return caption.start >= previous.start && caption.end >= previous.end;
+      });
     const valid = Boolean(
       timings
       && timings.scriptVersion === version
       && isFileFingerprintCurrent(timingVoice, timings.audioFingerprint)
-      && Array.isArray(timings.captions)
-      && timings.captions.length > 0,
+      && captionsHaveValidChronology,
     );
     return {
       valid,
@@ -477,6 +566,12 @@ export function reconcileWorkflowState(episodeDir, { now = new Date().toISOStrin
 
     const runningSince = Date.parse(previous.startedAt || "");
     if (
+      step === "timed"
+      && previous.status === "needs_attention"
+      && previous.diagnostic?.code === "voiceover_script_alignment_failed"
+    ) {
+      next = { ...previous };
+    } else if (
       previous.status === "running"
       && Number.isFinite(runningSince)
       && Date.parse(now) - runningSince > RUNNING_TIMEOUT_MS
@@ -496,7 +591,10 @@ export function reconcileWorkflowState(episodeDir, { now = new Date().toISOStrin
     } else if (previous.status === "valid" && !currentSnapshotMatches) {
       next = assessment.valid && (
         assessment.trust === "strong"
-        || outputFingerprint !== previous.outputFingerprint
+        || (
+          outputFingerprint !== previous.outputFingerprint
+          && inputFingerprint === previous.inputFingerprint
+        )
       )
         ? validStepFromArtifacts(previous, assessment, inputFingerprint, outputFingerprint, now)
         : {
@@ -567,6 +665,7 @@ export function beginWorkflowStep(
   { dependencies, enforceDependencies = false, now = new Date().toISOString() } = {},
 ) {
   if (!WORKFLOW_STEPS.includes(step)) throw new Error(`Unknown workflow step: ${step}`);
+  if (step === "rendered") assertRenderTimingPreflight(episodeDir);
   const state = reconcileWorkflowState(episodeDir, { now, write: false });
   if (enforceDependencies) {
     const missing = dependenciesForStep(episodeDir, step, dependencies).filter(
@@ -661,6 +760,80 @@ export function completeWorkflowStep(
   return state;
 }
 
+export function revalidateWorkflowStep(
+  episodeDir,
+  step,
+  { evidence, now = new Date().toISOString() } = {},
+) {
+  if (!["illustrated", "voiced"].includes(step)) {
+    throw new Error(`Only weak-trust steps can be revalidated: ${step}`);
+  }
+  const reviewEvidence = typeof evidence === "string" ? evidence.trim() : "";
+
+  const state = reconcileWorkflowState(episodeDir, { now, write: false });
+  const current = state.steps[step];
+  if (current.status !== "stale") {
+    const error = new Error(`${step} must be stale before it can be revalidated`);
+    error.code = "workflow_step_not_stale";
+    throw error;
+  }
+  const missingDependencies = ["script_validated", "script_approved"].filter(
+    (dependency) => !usableStep(dependency, episodeDir, state.steps[dependency]),
+  );
+  if (missingDependencies.length > 0) {
+    const error = new Error(`${step} requires a current validated and approved script`);
+    error.code = "workflow_dependency_missing";
+    error.nextActions = [`Complete or repair: ${missingDependencies.join(", ")}.`, "Retry revalidation."];
+    throw error;
+  }
+
+  const scriptVersion = activeScriptVersion(episodeDir);
+  const scriptRows = readCsv(path.join(episodeDir, "script.csv")).rows
+    .filter((row) => row.version === scriptVersion)
+    .sort((left, right) => Number(left.order) - Number(right.order));
+  const checkedCount = step === "voiced" ? scriptRows.length : REQUIRED_IMAGES.length;
+  const expectedEvidence = step === "voiced"
+    ? `voiced@${scriptVersion}:逐句核听 ${checkedCount}/${checkedCount} 行，并确认全部与当前稿逐行一致`
+    : `illustrated@${scriptVersion}:逐张检查 ${checkedCount}/${checkedCount} 张图片，并确认每张均适配当前稿`;
+  if (reviewEvidence !== expectedEvidence) {
+    const error = new Error(`Evidence does not match the ${step} review for script ${scriptVersion}; expected: ${expectedEvidence}`);
+    error.code = "workflow_review_evidence_invalid";
+    throw error;
+  }
+
+  const assessment = assessArtifacts(episodeDir, step);
+  if (!assessment.valid) {
+    const error = new Error(`Required outputs for ${step} are missing or invalid`);
+    error.code = "workflow_artifact_invalid";
+    throw error;
+  }
+
+  state.steps[step] = {
+    ...current,
+    status: "valid",
+    quality: assessment.quality || "review_required",
+    inputFingerprint: workflowInputFingerprint(episodeDir, step),
+    outputFingerprint: workflowOutputFingerprint(episodeDir, step),
+    startedAt: null,
+    completedAt: now,
+    updatedAt: now,
+    diagnostic: null,
+    revalidation: {
+      step,
+      reviewedAt: now,
+      scriptVersion,
+      checkedCount,
+      expectedCount: checkedCount,
+      evidence: reviewEvidence,
+    },
+  };
+  state.steps = refreshDependencyStatuses(episodeDir, state.steps, now);
+  state.updatedAt = now;
+  state.reconciledAt = now;
+  writeWorkflowState(episodeDir, state);
+  return state;
+}
+
 export function failWorkflowStep(
   episodeDir,
   step,
@@ -670,6 +843,7 @@ export function failWorkflowStep(
   if (!episodeDir || !WORKFLOW_STEPS.includes(step)) return null;
   const state = reconcileWorkflowState(episodeDir, { now, write: false });
   const current = state.steps[step];
+  if (diagnostic?.code === "workflow_render_preflight_blocked") return state;
   if (diagnostic?.code === "workflow_dependency_missing") {
     if (current.status !== "running") return state;
     const restored = fingerprintMatches(step, episodeDir, current.lastValid);
@@ -709,6 +883,7 @@ export function failWorkflowStep(
 }
 
 export function workflowNextActions(episodeDir, state = reconcileWorkflowState(episodeDir)) {
+  const timingAlignmentFailure = renderTimingBlocker(episodeDir);
   const attention = WORKFLOW_STEPS
     .filter((step) => state.steps[step].status === "needs_attention")
     .map((step) => ({
@@ -719,6 +894,7 @@ export function workflowNextActions(episodeDir, state = reconcileWorkflowState(e
     }));
   const ready = WORKFLOW_STEPS
     .filter((step) => state.steps[step].status === "ready")
+    .filter((step) => !(step === "rendered" && timingAlignmentFailure))
     .map((step) => ({ step, action: "run" }));
   const verified = usableStep("verified", episodeDir, state.steps.verified);
   const rendered = usableStep("rendered", episodeDir, state.steps.rendered);
@@ -730,10 +906,14 @@ export function workflowNextActions(episodeDir, state = reconcileWorkflowState(e
   const review = reviewSteps
     .filter((step) => state.steps[step].status === "valid")
     .map((step) => ({ step, action: "review" }));
-  return [...attention, ...review, ...ready];
+  const blocked = timingAlignmentFailure
+    ? [{ step: "rendered", action: "blocked", blockedBy: "timed", diagnostic: timingAlignmentFailure }]
+    : [];
+  return [...attention, ...review, ...ready, ...blocked];
 }
 
 export function workflowSummary(episodeDir, state = reconcileWorkflowState(episodeDir)) {
+  const timingAlignmentFailure = renderTimingBlocker(episodeDir);
   return {
     schemaVersion: state.schemaVersion,
     episode: state.episode,
@@ -741,9 +921,10 @@ export function workflowSummary(episodeDir, state = reconcileWorkflowState(episo
       WORKFLOW_STEPS.map((step) => {
         const value = state.steps[step];
         return [step, {
-          status: value.status,
+          status: step === "rendered" && timingAlignmentFailure ? "blocked" : value.status,
           quality: value.quality,
           attempts: value.attempts,
+          revalidation: value.revalidation,
           activeArtifactValid:
             value.status === "valid"
             ? fingerprintMatches(step, episodeDir, value)

@@ -43,7 +43,7 @@ try {
   }));
   fs.writeFileSync(
     path.join(episodeDir, "script.csv"),
-    "version,order,role,text,duration_hint,notes\nA,1,caption,等待批准再继续,2,测试\n",
+    "version,order,role,text,duration_hint,notes\nA,1,title,《测试书》,2,测试\nA,2,caption,等待批准再继续,2,测试\n",
   );
   fs.writeFileSync(path.join(audioDir, "source.mp3"), "not audio");
   const validation = spawnSync(process.execPath, [

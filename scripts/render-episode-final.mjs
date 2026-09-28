@@ -6,10 +6,16 @@ import { spawnSync } from "node:child_process";
 import { readCsv } from "./lib/csv.mjs";
 import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { fingerprintFile, isFileFingerprintCurrent, probeMedia } from "./lib/media-validation.mjs";
+import { resolvePreviewBodyTimings } from "./lib/preview-body-timings.mjs";
 import { buildProductionReport } from "./lib/production-report.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
+import { INTRO_VIDEO_TRIM_SECONDS } from "./lib/generated-voiceover.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
-import { beginWorkflowStep, completeWorkflowStep } from "./lib/workflow-state.mjs";
+import {
+  assertRenderTimingPreflight,
+  beginWorkflowStep,
+  completeWorkflowStep,
+} from "./lib/workflow-state.mjs";
 
 const ROOT = process.cwd();
 const [episodeName, requestedVersion, bgmInput] = process.argv.slice(2);
@@ -28,7 +34,7 @@ installWorkflowDiagnostics({
   ],
 });
 const HYPERFRAMES_VERSION = "0.7.33";
-const INTRO_TRIM_SECONDS = 2.38;
+const INTRO_TRIM_SECONDS = INTRO_VIDEO_TRIM_SECONDS;
 const INTRO_OFFSET_MS = Math.round(INTRO_TRIM_SECONDS * 1000);
 const FINAL_BGM_BASE_VOLUME = 0.32;
 const FINAL_BGM_GAIN_DB = Number(process.env.FINAL_BGM_GAIN_DB || "0");
@@ -49,6 +55,7 @@ if (!episodeName) {
   });
 }
 if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
+assertRenderTimingPreflight(episodeDir);
 beginWorkflowStep(episodeDir, "rendered", { enforceDependencies: true });
 
 function chooseRandomBgm() {
@@ -83,10 +90,46 @@ const bodyDir = path.join(previewDir, "body");
 const finalCandidateDir = path.join(previewDir, "final");
 const introVideo = path.join(introDir, "renders", "intro.mp4");
 const bodyVideo = path.join(bodyDir, "renders", "body.mp4");
-const introVoice = path.join(ROOT, "assets", "template-audio", "intro-voiceover.mp3");
 const bodyVoice = path.join(audioDir, "body-voiceover.mp3");
+const sharedIntroVoice = path.join(ROOT, "assets", "template-audio", "intro-voiceover.mp3");
+const generatedIntroVoice = path.join(audioDir, "intro-voiceover.generated.wav");
+const generatedIntroManifest = path.join(audioDir, "intro-voiceover.generated.json");
+let introVoice = sharedIntroVoice;
+let introVoiceSource = "shared-template";
+let generatedAudioPairIsCurrent = false;
+if (fs.existsSync(generatedIntroManifest)) {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(generatedIntroManifest, "utf8"));
+    const scriptAndBodyMatch = manifest.scriptVersion === scriptVersion
+      && isFileFingerprintCurrent(scriptPath, manifest.scriptFingerprint)
+      && isFileFingerprintCurrent(bodyVoice, manifest.bodyVoiceFingerprint);
+    if (scriptAndBodyMatch) {
+      if (!isFileFingerprintCurrent(generatedIntroVoice, manifest.generatedIntroFingerprint)) {
+        throw new WorkflowError("The generated intro audio no longer matches its manifest.", {
+          code: "generated_intro_artifact_stale",
+        });
+      }
+      const standardDuration = Number(probeMedia(sharedIntroVoice).format?.duration || 0);
+      const generatedDuration = Number(probeMedia(generatedIntroVoice).format?.duration || 0);
+      if (Math.abs(generatedDuration - standardDuration) > 1 / 48000) {
+        throw new WorkflowError(
+          `Generated intro duration ${generatedDuration.toFixed(3)}s does not match the standard ${standardDuration.toFixed(3)}s.`,
+          { code: "generated_intro_duration_mismatch" },
+        );
+      }
+      introVoice = generatedIntroVoice;
+      introVoiceSource = "generated-cloned-greeting";
+      generatedAudioPairIsCurrent = true;
+    }
+  } catch (error) {
+    if (error instanceof WorkflowError) throw error;
+    console.warn(`Ignoring stale generated intro metadata: ${error.message}`);
+  }
+}
 const introStoryVoice = path.join(previewDir, "audio", "intro-voiceover-story.mp3");
-const bodyStoryVoice = path.join(audioDir, "body-voiceover-story.mp3");
+const bodyStoryVoice = generatedAudioPairIsCurrent
+  ? bodyVoice
+  : path.join(audioDir, "body-voiceover-story.mp3");
 const bgmMixSuffix =
   FINAL_BGM_GAIN_DB === 0
     ? "bgm-standard"
@@ -207,12 +250,18 @@ function readBodyDuration() {
     console.warn(`Could not read body-timings.json; continuing with voiceover duration: ${error.message}`);
     return fallbackDuration;
   }
-  if (timings.scriptVersion && timings.scriptVersion !== scriptVersion) {
-    console.warn(`body-timings.json is for ${timings.scriptVersion}; continuing with script hints for ${scriptVersion}`);
-    return fallbackDuration;
-  }
-  if (!isFileFingerprintCurrent(bodyVoice, timings.audioFingerprint)) {
-    console.warn("body-timings.json does not match the current voiceover; continuing with voiceover duration and script hints");
+  const scriptRows = readCsv(scriptPath).rows
+    .filter((row) => row.version === scriptVersion)
+    .sort((left, right) => Number(left.order) - Number(right.order));
+  const resolved = resolvePreviewBodyTimings(timings, {
+    version: scriptVersion,
+    scriptPath,
+    voicePath: bodyVoice,
+    expectedOrders: scriptRows.map((row) => row.order),
+    fallbackDuration,
+  });
+  if (!resolved.accepted) {
+    console.warn(resolved.warning || "Ignoring stale body timings; continuing with voiceover duration and script hints");
     return fallbackDuration;
   }
   timingAlignment = {
@@ -222,13 +271,8 @@ function readBodyDuration() {
     asrAvailable: timings.alignment?.asrAvailable === true,
     silenceDetectionAvailable: timings.alignment?.silenceDetectionAvailable !== false,
   };
-  if (timings.alignment?.requiresAgentReview) {
-    console.warn(
-      `Rendering with timings marked for Agent review (${timings.alignment.method || "unknown method"}): `
-      + `${timings.alignment.reason || "low-confidence ASR alignment"}`,
-    );
-  }
-  const timingDuration = Number(timings.duration);
+  if (resolved.warning) console.warn(resolved.warning.replace(/^Body timings need Agent review/u, "Rendering with timings marked for Agent review"));
+  const timingDuration = Number(resolved.timings?.duration);
   return Number.isFinite(timingDuration) && timingDuration > 0 ? timingDuration : fallbackDuration;
 }
 
@@ -255,7 +299,9 @@ fs.mkdirSync(rendersDir, { recursive: true });
 run("node", ["scripts/create-episode-preview.mjs", episodeName, scriptVersion]);
 fs.mkdirSync(finalCandidateDir, { recursive: true });
 run("node", ["scripts/process-voiceover.mjs", introVoice, introStoryVoice, "story"]);
-run("node", ["scripts/process-voiceover.mjs", bodyVoice, bodyStoryVoice, "story"]);
+if (!generatedAudioPairIsCurrent) {
+  run("node", ["scripts/process-voiceover.mjs", bodyVoice, bodyStoryVoice, "story"]);
+}
 run("npx", ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, "render", "--quality", "standard", "--output", "renders/intro.mp4"], { cwd: introDir });
 run("npx", ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, "render", "--quality", "standard", "--output", "renders/body.mp4"], { cwd: bodyDir });
 
@@ -329,6 +375,8 @@ const report = buildProductionReport({
   })),
   audioInputs: {
     introVoice: fs.existsSync(introVoice),
+    introVoiceSource,
+    introVoicePath: path.relative(ROOT, introVoice),
     bodyVoice: fs.existsSync(bodyVoice),
     bgm: fs.existsSync(bgmPath),
     gearSfx: fs.existsSync(INTRO_SCROLL_SFX_PATH),
