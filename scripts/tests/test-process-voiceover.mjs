@@ -34,6 +34,14 @@ try {
   const episodeDir = path.join(workflowRoot, "episodes", "测试书");
   const audioDir = path.join(episodeDir, "audio");
   fs.mkdirSync(audioDir, { recursive: true });
+  const profileDir = path.join(workflowRoot, "assets", "template-audio", "soft-male");
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(path.join(workflowRoot, "assets", "template-audio", "voice-profiles.json"), JSON.stringify({
+    defaultProfile: "soft-male",
+    profiles: { "soft-male": { label: "柔和男声", intro: "soft-male/intro.mp3", reference: "soft-male/reference-10s.mp3" } },
+  }));
+  fs.writeFileSync(path.join(profileDir, "intro.mp3"), "fixture intro");
+  fs.writeFileSync(path.join(profileDir, "reference-10s.mp3"), "fixture reference");
   fs.writeFileSync(path.join(episodeDir, "brief.json"), JSON.stringify({
     display_title: "测试书",
     author: "测试作者",

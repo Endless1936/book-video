@@ -19,8 +19,8 @@ const rows = [
 
 const fullText = rows.map((row) => row.text).join("");
 
-function blockingCodes(result) {
-  return (result.diagnostics.blockingIssues || []).map((issue) => issue.code);
+function reviewCodes(result) {
+  return (result.diagnostics.reviewIssues || []).map((issue) => issue.code);
 }
 
 // 1. Perfect recognition is valid.
@@ -36,66 +36,67 @@ function blockingCodes(result) {
 {
   const traditional = "《被討厭的勇氣》很多時候讓你痛苦的不是別人的討厭而是你太害怕被討厭";
   const result = checkScriptContent(rows, asr(traditional), { episodeTitle: "被讨厌的勇气" });
-  assert.equal(result.contentValid, true, `blocking: ${blockingCodes(result).join(",")}`);
+  assert.equal(result.contentValid, true, `review: ${reviewCodes(result).join(",")}`);
 }
 
 // 3. A single-character ASR substitution is reviewable, not blocking.
 {
   const variant = fullText.replace("痛苦的", "痛哭的");
   const result = checkScriptContent(rows, asr(variant), { episodeTitle: "被讨厌的勇气" });
-  assert.equal(result.contentValid, true, `blocking: ${blockingCodes(result).join(",")}`);
+  assert.equal(result.contentValid, true, `review: ${reviewCodes(result).join(",")}`);
   assert.equal(result.diagnostics.requiresAgentReview, true);
 }
 
-// 4. A duplicated/garbled internal segment blocks.
+// 4. A duplicated/garbled internal segment produces a review signal.
 {
   const duplicated = fullText.replace("很多时候让你痛苦的", "很多时候让你痛苦的很多时候让你痛苦的");
   const result = checkScriptContent(rows, asr(duplicated), { episodeTitle: "被讨厌的勇气" });
   assert.equal(result.contentValid, false);
-  assert.ok(blockingCodes(result).includes("unexpected_internal_speech"));
+  assert.equal(result.diagnostics.contentCheck, "review_required");
+  assert.ok(reviewCodes(result).includes("unexpected_internal_speech"));
 }
 
-// 5. A missing row blocks.
+// 5. A missing row produces a review signal.
 {
   const missing = rows.map((row) => row.text).filter((text) => text !== "不是别人的讨厌").join("");
   const result = checkScriptContent(rows, asr(missing), { episodeTitle: "被讨厌的勇气" });
   assert.equal(result.contentValid, false);
-  assert.ok(blockingCodes(result).includes("script_row_missing_or_mismatched"));
+  assert.ok(reviewCodes(result).includes("script_row_missing_or_mismatched"));
 }
 
-// 6. Reordered rows block (mapped as internal extra speech or order mismatch).
+// 6. Reordered rows produce a review signal (mapped as internal extra speech or order mismatch).
 {
   const reordered = [rows[0].text, rows[3].text, rows[1].text, rows[2].text].join("");
   const result = checkScriptContent(rows, asr(reordered), { episodeTitle: "被讨厌的勇气" });
   assert.equal(result.contentValid, false);
   assert.ok(
-    blockingCodes(result).includes("unexpected_internal_speech")
-    || blockingCodes(result).includes("script_row_order_mismatch"),
+    reviewCodes(result).includes("unexpected_internal_speech")
+    || reviewCodes(result).includes("script_row_order_mismatch"),
   );
 }
 
-// 7. Extra trailing speech blocks.
+// 7. Extra trailing speech produces a review signal.
 {
   const withTrailing = `${fullText}谢谢大家`;
   const result = checkScriptContent(rows, asr(withTrailing), { episodeTitle: "被讨厌的勇气" });
   assert.equal(result.contentValid, false);
-  assert.ok(blockingCodes(result).includes("unexpected_trailing_speech"));
+  assert.ok(reviewCodes(result).includes("unexpected_trailing_speech"));
 }
 
 // 8. A known spoken opener is tolerated (detected lead-in, not blocking).
 {
   const withGreeting = `今天分享的是${fullText}`;
   const result = checkScriptContent(rows, asr(withGreeting), { episodeTitle: "被讨厌的勇气" });
-  assert.equal(result.contentValid, true, `blocking: ${blockingCodes(result).join(",")}`);
+  assert.equal(result.contentValid, true, `review: ${reviewCodes(result).join(",")}`);
   assert.equal(result.diagnostics.detectedLeadIn.text, "今天分享的是");
 }
 
-// 9. Unknown leading speech blocks.
+// 9. Unknown leading speech produces a review signal.
 {
   const withJunk = `乱七八糟${fullText}`;
   const result = checkScriptContent(rows, asr(withJunk), { episodeTitle: "被讨厌的勇气" });
   assert.equal(result.contentValid, false);
-  assert.ok(blockingCodes(result).includes("unexpected_leading_speech"));
+  assert.ok(reviewCodes(result).includes("unexpected_leading_speech"));
 }
 
 // 10. Empty transcription is unavailable, not blocked.
@@ -118,7 +119,7 @@ function blockingCodes(result) {
   const titleOnly = "《被讨厌的勇气》";
   const result = checkScriptContent(rows, asr(titleOnly), { episodeTitle: "被讨厌的勇气" });
   assert.equal(result.contentValid, false);
-  assert.ok(blockingCodes(result).includes("script_row_missing_or_mismatched"));
+  assert.ok(reviewCodes(result).includes("script_row_missing_or_mismatched"));
 }
 
 console.log("script content check (Whisper text only): ok");

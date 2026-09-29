@@ -5,10 +5,10 @@
 固定标准：
 
 - 第一帧沿用 `result-bridge.png`，和开场结果页无跳变衔接。
-- 后续使用 2-3 张 AI 氛围图，慢推近和交叉淡入。
+- 后续按正文行数生成 `ceil(N / 5)` 张 AI 氛围图（每张覆盖 3-5 行），慢推近和交叉淡入。
 - 书名和作者顶部常驻。
 - 字幕使用 `script.csv` 文本和 `audio/body-timings.json` 时间。
-- 时间轴生成：`node scripts/create-body-timings.mjs "<book>" <script-version>`；以语音停顿映射脚本行，Whisper 文本仅供 Agent 复核。停顿不足时按语音时长和脚本提示估算并继续生成。
+- 时间轴生成：`node scripts/create-body-timings.mjs "<book>" <script-version>`；使用 FFmpeg 静音边界映射脚本行。停顿不足时按语音时长和脚本提示估算并标记复核；Whisper 不提供时间戳。
 
 正式生产入口：
 

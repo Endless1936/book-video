@@ -1,6 +1,6 @@
-// Timing is owned by FFmpeg silencedetect speech boundaries. Whisper is used
-// only to check that spoken content matches script.csv (TTS duplication or
-// garbling), never to supply timestamps.
+// Timing is owned by FFmpeg silencedetect speech boundaries. Whisper supplies
+// TTS content-review signals only; its transcript is neither subtitle truth
+// nor a gate, and it never supplies timestamps.
 function roundSeconds(value) {
   return Number(Number(value).toFixed(2));
 }
@@ -183,10 +183,9 @@ function likelyIntroPrefix(text) {
   });
 }
 
-// Whisper content check only: does the recognized text match script.csv well
-// enough to prove the TTS read the right lines, in order, without duplicating
-// or garbling them? It deliberately returns NO timestamps — timing comes from
-// silencedetect speech boundaries.
+// Whisper content check only: compare likely TTS speech with script.csv and
+// report uncertain or mismatched text for Agent review. It deliberately
+// returns NO timestamps — timing comes from silencedetect speech boundaries.
 export function checkScriptContent(rows, asr, { episodeTitle = "" } = {}) {
   const expected = rows.flatMap((row, rowIndex) => Array.from(normalizeSpeechText(row.text)).map((character) => ({
     character,
@@ -390,9 +389,9 @@ export function checkScriptContent(rows, asr, { episodeTitle = "" } = {}) {
     });
   }
 
-  // Only duplication or garbling is a hard block. A row may read slightly
-  // differently because of ASR variance; that is reviewable, not blocking.
-  const blockingCodes = new Set([
+  // These are review signals, not hard gates: Whisper can miss or alter words
+  // even when the approved script was read correctly.
+  const reviewCodes = new Set([
     "script_row_missing_or_mismatched",
     "script_row_text_mismatch",
     "script_title_mismatch",
@@ -403,16 +402,16 @@ export function checkScriptContent(rows, asr, { episodeTitle = "" } = {}) {
     "unexpected_trailing_speech",
     "unexpected_internal_speech",
   ]);
-  const blockingIssues = result.diagnostics.issues.filter((issue) => blockingCodes.has(issue.code));
-  result.contentValid = blockingIssues.length === 0;
+  const reviewIssues = result.diagnostics.issues.filter((issue) => reviewCodes.has(issue.code));
+  result.contentValid = reviewIssues.length === 0;
   result.ok = result.diagnostics.issues.length === 0;
   result.diagnostics.requiresAgentReview = result.diagnostics.rows.some((row) => !row.exact)
     || result.diagnostics.issues.length > 0;
-  result.diagnostics.contentCheck = blockingIssues.length
-    ? "blocked"
+  result.diagnostics.contentCheck = reviewIssues.length
+    ? "review_required"
     : (result.diagnostics.requiresAgentReview ? "matched_with_asr_variance" : "matched");
-  if (blockingIssues.length) {
-    result.diagnostics.blockingIssues = blockingIssues;
+  if (reviewIssues.length) {
+    result.diagnostics.reviewIssues = reviewIssues;
   }
   return result;
 }

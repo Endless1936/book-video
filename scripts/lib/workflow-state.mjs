@@ -11,6 +11,7 @@ import {
 import { resolveScriptVersion } from "./script-version.mjs";
 import { validateBodyScript } from "./script-policy.mjs";
 import { getAtmosphereImageNames } from "./body-scenes.mjs";
+import { resolveVoiceProfile } from "./voice-profiles.mjs";
 
 export const WORKFLOW_STEPS = Object.freeze([
   "book_ready",
@@ -131,18 +132,6 @@ function renderTimingBlocker(episodeDir) {
         nextActions: ["Wait for timing generation to finish, then retry preview or render."],
       };
     }
-    if (
-      timed.status === "needs_attention"
-      && timed.diagnostic?.code === "voiceover_script_alignment_failed"
-    ) {
-      return {
-        code: timed.diagnostic.code,
-        error: "Rendering is blocked because the last voiceover failed script alignment; rerun timing generation successfully first.",
-        timedStatus: timed.status,
-        details: timed.diagnostic.details || {},
-        nextActions: timed.diagnostic.nextActions,
-      };
-    }
   } catch {}
   return null;
 }
@@ -155,13 +144,10 @@ export function assertRenderTimingPreflight(episodeDir) {
   error.details = {
     blockedBy: "timed",
     timedStatus: blocker.timedStatus || "needs_attention",
-    diagnosticCode: blocker.code || "voiceover_script_alignment_failed",
+    diagnosticCode: blocker.code || "timing_generation_in_progress",
     ...(blocker.details || {}),
   };
-  error.nextActions = blocker.nextActions || [
-    "Review the voiceover against every current script row.",
-    "Replace or regenerate the voiceover, then rerun timing generation successfully.",
-  ];
+  error.nextActions = blocker.nextActions || ["Wait for timing generation to finish, then retry preview or render."];
   throw error;
 }
 
@@ -325,7 +311,6 @@ function inputTargets(episodeDir, step) {
       ...generatedIntroTargets(episodeDir),
       path.join("audio", "body-timings.json"),
       path.join("..", "..", "templates", "shared-video-template"),
-      path.join("..", "..", "assets", "template-audio"),
       path.join("..", "..", "assets", "sfx", "gear-scroll.mp3"),
       bgm,
     ].filter(Boolean),
@@ -353,7 +338,19 @@ function outputTargets(episodeDir, step) {
 }
 
 export function workflowInputFingerprint(episodeDir, step) {
-  return fingerprintBundle(episodeDir, inputTargets(episodeDir, step));
+  const fingerprint = fingerprintBundle(episodeDir, inputTargets(episodeDir, step));
+  if (step !== "voiced" && step !== "rendered") return fingerprint;
+
+  const repositoryRoot = path.resolve(episodeDir, "..", "..");
+  const profile = resolveVoiceProfile(repositoryRoot, episodeDir);
+  const voiceAssets = step === "voiced"
+    ? [profile.introPath, profile.referencePath]
+    : [profile.introPath];
+  const voiceFingerprint = fingerprintBundle(repositoryRoot, voiceAssets);
+  return createHash("sha256")
+    .update(fingerprint || "")
+    .update(`\0voice-profile:${profile.id}\0${voiceFingerprint || ""}`)
+    .digest("hex");
 }
 
 export function workflowOutputFingerprint(episodeDir, step) {
@@ -451,6 +448,7 @@ function assessArtifacts(episodeDir, step) {
     const valid = Boolean(
       timings
       && timings.scriptVersion === version
+      && isFileFingerprintCurrent(scriptPath, timings.scriptFingerprint)
       && isFileFingerprintCurrent(timingVoice, timings.audioFingerprint)
       && captionsHaveValidChronology,
     );
@@ -576,7 +574,11 @@ export function reconcileWorkflowState(episodeDir, { now = new Date().toISOStrin
       && previous.status === "needs_attention"
       && previous.diagnostic?.code === "voiceover_script_alignment_failed"
     ) {
-      next = { ...previous };
+      // Migrate the obsolete Whisper hard-gate state. Current timing uses
+      // silence boundaries; ASR mismatch is review evidence, not a blocker.
+      next = assessment.valid
+        ? validStepFromArtifacts(previous, assessment, inputFingerprint, outputFingerprint, now)
+        : { ...previous, status: "stale", diagnostic: null, updatedAt: now };
     } else if (
       previous.status === "running"
       && Number.isFinite(runningSince)
@@ -634,7 +636,6 @@ export function reconcileWorkflowState(episodeDir, { now = new Date().toISOStrin
     } else if (
       previous.status === "valid"
       && !assessment.valid
-      && step !== "script_approved"
     ) {
       next = {
         ...next,
@@ -902,7 +903,23 @@ export function workflowNextActions(episodeDir, state = reconcileWorkflowState(e
   const ready = WORKFLOW_STEPS
     .filter((step) => state.steps[step].status === "ready")
     .filter((step) => !(step === "rendered" && timingAlignmentFailure))
-    .map((step) => ({ step, action: "run" }));
+    .map((step) => ({ step, action: step === "script_approved" ? "approve" : "run" }));
+  const staleApproval = state.steps.script_approved.status === "stale"
+    && usableStep("script_validated", episodeDir, state.steps.script_validated)
+    ? [{ step: "script_approved", action: "approve" }]
+    : [];
+  const staleVoice = state.steps.voiced.status === "stale"
+    && dependenciesForStep(episodeDir, "voiced").every(
+      (dependency) => usableStep(dependency, episodeDir, state.steps[dependency]),
+    )
+    ? [{ step: "voiced", action: "run" }]
+    : [];
+  const staleTiming = state.steps.timed.status === "stale"
+    && dependenciesForStep(episodeDir, "timed").every(
+      (dependency) => usableStep(dependency, episodeDir, state.steps[dependency]),
+    )
+    ? [{ step: "timed", action: "run" }]
+    : [];
   const verified = usableStep("verified", episodeDir, state.steps.verified);
   const rendered = usableStep("rendered", episodeDir, state.steps.rendered);
   const reviewSteps = verified
@@ -916,7 +933,7 @@ export function workflowNextActions(episodeDir, state = reconcileWorkflowState(e
   const blocked = timingAlignmentFailure
     ? [{ step: "rendered", action: "blocked", blockedBy: "timed", diagnostic: timingAlignmentFailure }]
     : [];
-  return [...attention, ...review, ...ready, ...blocked];
+  return [...attention, ...review, ...ready, ...staleApproval, ...staleVoice, ...staleTiming, ...blocked];
 }
 
 export function workflowSummary(episodeDir, state = reconcileWorkflowState(episodeDir)) {

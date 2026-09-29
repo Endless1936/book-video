@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
 // Body timing generation from FFmpeg silencedetect speech boundaries only.
-// Each speech segment maps to one script row in order. A single extra leading
-// segment (a spoken opener such as "今天分享的是") is skipped for compatibility;
-// anything else is coalesced or estimated and marked for review.
+// Map speech segments to script rows in order. Extra boundaries are coalesced;
+// too few boundaries use duration estimates. Both corrections are marked for review.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";

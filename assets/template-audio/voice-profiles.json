@@ -1,0 +1,15 @@
+{
+  "defaultProfile": "soft-male",
+  "profiles": {
+    "soft-male": {
+      "label": "柔和男声",
+      "intro": "soft-male/intro.mp3",
+      "reference": "soft-male/reference-10s.mp3"
+    },
+    "hong-kong-male": {
+      "label": "港风男声",
+      "intro": "hong-kong-male/intro.mp3",
+      "reference": "hong-kong-male/reference-10s.mp3"
+    }
+  }
+}

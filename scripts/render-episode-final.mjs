@@ -10,6 +10,7 @@ import { resolvePreviewBodyTimings } from "./lib/preview-body-timings.mjs";
 import { buildProductionReport } from "./lib/production-report.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { INTRO_VIDEO_TRIM_SECONDS } from "./lib/generated-voiceover.mjs";
+import { resolveVoiceProfile } from "./lib/voice-profiles.mjs";
 import { getAtmosphereImageNames } from "./lib/body-scenes.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 import {
@@ -56,6 +57,7 @@ if (!episodeName) {
   });
 }
 if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
+const voiceProfile = resolveVoiceProfile(ROOT, episodeDir);
 assertRenderTimingPreflight(episodeDir);
 beginWorkflowStep(episodeDir, "rendered", { enforceDependencies: true });
 
@@ -92,7 +94,7 @@ const finalCandidateDir = path.join(previewDir, "final");
 const introVideo = path.join(introDir, "renders", "intro.mp4");
 const bodyVideo = path.join(bodyDir, "renders", "body.mp4");
 const bodyVoice = path.join(audioDir, "body-voiceover.mp3");
-const sharedIntroVoice = path.join(ROOT, "assets", "template-audio", "intro-voiceover.mp3");
+const sharedIntroVoice = voiceProfile.introPath;
 const generatedIntroVoice = path.join(audioDir, "intro-voiceover.generated.wav");
 const generatedIntroManifest = path.join(audioDir, "intro-voiceover.generated.json");
 let introVoice = sharedIntroVoice;
@@ -105,6 +107,12 @@ if (fs.existsSync(generatedIntroManifest)) {
       && isFileFingerprintCurrent(scriptPath, manifest.scriptFingerprint)
       && isFileFingerprintCurrent(bodyVoice, manifest.bodyVoiceFingerprint);
     if (scriptAndBodyMatch) {
+      if (manifest.voiceSource === "tts" && manifest.voiceProfile !== voiceProfile.id) {
+        throw new WorkflowError(
+          `Generated voiceover uses profile "${manifest.voiceProfile || "unknown"}" but the episode selects "${voiceProfile.id}". Generate a new body-voiceover.raw.mp3 with the selected profile's reference, then rerun finalize-generated-voiceover.mjs before rendering.`,
+          { code: "generated_voice_profile_mismatch" },
+        );
+      }
       if (!isFileFingerprintCurrent(generatedIntroVoice, manifest.generatedIntroFingerprint)) {
         throw new WorkflowError("The generated intro audio no longer matches its manifest.", {
           code: "generated_intro_artifact_stale",

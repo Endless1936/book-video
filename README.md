@@ -16,7 +16,7 @@ Copyright (c) 2026 prototech, endless, and 未济.
 2. Codex 确认书名、作者和版本，并在对话中用代码块完整展示可直接复制到剪映的配音稿，第一行包含书名，同时保存为本地脚本文件。
 3. 你直接在对话中审核文案；确认后，Codex 生成氛围图和视频画面。
 4. 如果当前 Agent 环境明确支持免费豆包参考音克隆，Codex 会用项目参考音生成口播；否则你用剪映导出口播 MP3，并把文件路径告诉 Codex。
-5. Codex 用 ASR 生成时间参考，以 `script.csv` 为字幕真源，对齐字幕、混入 BGM，并渲染最终 MP4。
+5. Codex 用 FFmpeg 静音边界生成字幕时间参考，以 `script.csv` 为字幕真源；Whisper 只辅助检查自动生成的 TTS 内容，不提供时间戳。
 6. 如果你要求替换文案、图片或音频，Codex 会生成新方案，通过检查后覆盖旧方案。
 
 脚本失败不会成为无提示的死路。命令会保留非零退出以阻止坏产物生效，同时输出 `BOOK_VIDEO_DIAGNOSTIC` 并保存到 `tmp/last-workflow-diagnostic.json`。Codex 会据此检查输入或依赖、修复后重试最小失败步骤；旧的有效成片在新候选通过前不会被替换。

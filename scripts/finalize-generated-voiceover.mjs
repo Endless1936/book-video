@@ -16,6 +16,7 @@ import { fingerprintFile, isFileFingerprintCurrent, validateVoiceoverArtifact } 
 import { buildSpeechSegments, checkScriptContent, parseSilenceEvents } from "./lib/body-timings.mjs";
 import { completeWorkflowStep } from "./lib/workflow-state.mjs";
 import { findLeadingSilence, replaceArtifactsTransactionally } from "./lib/generated-voiceover.mjs";
+import { resolveVoiceProfile } from "./lib/voice-profiles.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
 const ROOT = process.cwd();
@@ -29,9 +30,7 @@ const rawPath = audioDir ? path.join(audioDir, "body-voiceover.raw.mp3") : "";
 const finalPath = audioDir ? path.join(audioDir, "body-voiceover.mp3") : "";
 const generatedIntroPath = audioDir ? path.join(audioDir, "intro-voiceover.generated.wav") : "";
 const generatedIntroManifestPath = audioDir ? path.join(audioDir, "intro-voiceover.generated.json") : "";
-const standardIntroPath = path.join(ROOT, "assets", "template-audio", "intro-voiceover.mp3");
 const modelPath = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
-const referenceVoicePath = path.join(ROOT, "assets", "template-audio", "audio-ref.mp3");
 const asrDir = audioDir ? path.join(audioDir, "asr") : "";
 const asrBase = asrDir ? path.join(asrDir, "generated-voiceover-check") : "";
 
@@ -51,11 +50,11 @@ const voiceoverInputPath = voiceSource === "tts" ? rawPath : finalPath;
 installWorkflowDiagnostics({
   root: ROOT,
   command: "node scripts/finalize-generated-voiceover.mjs",
-  stage: "generated_voiceover_content_gate",
+  stage: "generated_voiceover_finalize",
   episodeDir,
   nextActions: [
-    "Keep the source audio and current canonical voiceover unchanged if a confirmed TTS content mismatch is reported.",
-    "Review the listed script differences; regenerate TTS or use the Jianying source when appropriate.",
+    "Inspect the reported audio input or media-processing error and fix that narrow issue.",
+    "Retry finalization; existing canonical voiceover files remain in place until a candidate succeeds.",
   ],
 });
 
@@ -71,6 +70,8 @@ if (!episodeDir.startsWith(`${episodesRoot}${path.sep}`)) {
   });
 }
 if (!fs.existsSync(episodeDir)) throw new Error(`Episode not found: ${episodeDir}`);
+const voiceProfile = resolveVoiceProfile(ROOT, episodeDir);
+const standardIntroPath = voiceProfile.introPath;
 if (!fs.existsSync(scriptPath)) throw new Error(`Missing approved script: ${scriptPath}`);
 if (!fs.existsSync(approvalPath)) {
   throw new WorkflowError(`Script approval record is missing: ${approvalPath}`, {
@@ -121,12 +122,6 @@ if (rows.some((row) => !String(row.text || "").trim())) {
   });
 }
 
-if (voiceSource === "tts" && !fs.existsSync(referenceVoicePath)) {
-  throw new WorkflowError(`Required local voice-cloning reference is missing: ${referenceVoicePath}`, {
-    code: "voice_reference_missing",
-    nextActions: ["Keep the canonical voiceover unchanged and use the manual Jianying export path (--source jianying)."],
-  });
-}
 if (!fs.existsSync(voiceoverInputPath)) {
   throw new WorkflowError(`Voiceover file not found: ${voiceoverInputPath}`, {
     code: voiceSource === "tts" ? "generated_voiceover_missing" : "jianying_voiceover_missing",
@@ -228,21 +223,11 @@ if (voiceSource === "tts") {
         if (!contentCheck.textAvailable) {
           noteWhisperUnavailable(contentCheck.diagnostics.contentCheckReason || "Whisper returned no readable speech text");
         } else if (!contentCheck.contentValid) {
-          const differences = (contentCheck.diagnostics.blockingIssues || contentCheck.diagnostics.issues)
+          const differences = (contentCheck.diagnostics.reviewIssues || contentCheck.diagnostics.issues)
             .map((issue) => issue.message);
-          throw new WorkflowError(
-            `Generated voiceover content check found a script mismatch or duplicated/garbled speech: ${differences.join(" ")}`,
-            {
-              code: "generated_voiceover_content_check_failed",
-              details: {
-                scriptVersion: version,
-                scriptRows: rows.length,
-                contentCheck: contentCheck.diagnostics,
-                sourceDurationSeconds: Number(sourceVoiceover.duration.toFixed(2)),
-                sourceVoiceover: path.relative(ROOT, voiceoverInputPath),
-              },
-            },
-          );
+          contentCheck.diagnostics.requiresAgentReview = true;
+          console.warn("Whisper found possible content differences; continuing because ASR is review evidence, not a gate:");
+          console.warn(differences.join(" "));
         } else if (contentCheck.diagnostics.requiresAgentReview) {
           console.warn("Whisper found minor script-text variance; script.csv remains the subtitle truth:");
           console.warn(JSON.stringify({
@@ -289,8 +274,7 @@ if (voiceSource === "tts") {
       sourceVoiceover.duration,
       parseSilenceEvents(`${boundaryDetection.stdout || ""}\n${boundaryDetection.stderr || ""}`),
     );
-    const greetingWasRecognized = Boolean(contentCheck.diagnostics.detectedLeadIn);
-    if (speechSegments.length >= 2 && (!contentCheck.textAvailable || greetingWasRecognized)) {
+    if (speechSegments.length >= 2) {
       generatedIntroSplit = {
         greeting: speechSegments[0],
         bodyStart: speechSegments[1].start,
@@ -384,6 +368,7 @@ try {
 
     const manifest = {
       voiceSource: "tts",
+      voiceProfile: voiceProfile.id,
       scriptVersion: version,
       scriptFingerprint: fingerprintFile(scriptPath),
       bodyVoiceFingerprint: fingerprintFile(bodyCandidate),
