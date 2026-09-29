@@ -276,17 +276,6 @@ const runFfmpeg = (args, stage) => {
   }
 };
 
-function makeAtempoFilter(factor) {
-  const filters = [];
-  let remaining = factor;
-  while (remaining > 2) {
-    filters.push("atempo=2");
-    remaining /= 2;
-  }
-  if (remaining > 1.001) filters.push(`atempo=${remaining.toFixed(6)}`);
-  return filters;
-}
-
 let generatedIntroSplit = null;
 let standardIntroDuration = 0;
 if (voiceSource === "tts") {
@@ -368,12 +357,15 @@ try {
   ];
   if (generatedIntroSplit) {
     const greetingDuration = generatedIntroSplit.greeting.end - generatedIntroSplit.greeting.start;
-    const maxGreetingSpeechDuration = Math.min(1.03, standardIntroDuration);
-    const tempoFilters = makeAtempoFilter(Math.max(1, greetingDuration / maxGreetingSpeechDuration));
+    if (greetingDuration > standardIntroDuration) {
+      throw new WorkflowError(
+        `The generated greeting (${greetingDuration.toFixed(3)}s) is longer than the shared intro (${standardIntroDuration.toFixed(3)}s); it cannot be kept at natural speed without being cut off.`,
+        { code: "generated_intro_duration_mismatch" },
+      );
+    }
     const introFilters = [
       `atrim=start=${generatedIntroSplit.greeting.start.toFixed(6)}:end=${generatedIntroSplit.greeting.end.toFixed(6)}`,
       "asetpts=PTS-STARTPTS",
-      ...tempoFilters,
       "apad",
       `atrim=duration=${standardIntroDuration.toFixed(6)}`,
       pcmFormat,
@@ -398,7 +390,7 @@ try {
       generatedIntroFingerprint: fingerprintFile(introCandidate),
       introDurationSeconds: introArtifact.duration,
       greetingText: contentCheck.diagnostics.detectedLeadIn?.text || "今天分享的是",
-      greetingSpeechEndSeconds: Math.min(greetingDuration, maxGreetingSpeechDuration),
+      greetingSpeechEndSeconds: greetingDuration,
       titleSpeechStartSeconds: generatedIntroSplit.bodyStart,
     };
     fs.writeFileSync(manifestCandidate, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
