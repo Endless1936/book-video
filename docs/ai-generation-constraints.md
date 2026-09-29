@@ -5,7 +5,7 @@
 ## 1. 音色克隆 / 口播（audio_to_audio_plus）
 
 ### 参考音
-- 以 `assets/template-audio/audio-ref.mp3` 作为唯一音色底样（不要用 3 秒的 `intro-voiceover.mp3`）；若宿主工具限制参考长度，可从该文件裁取前约 15 秒。
+- `assets/template-audio/audio-ref.mp3` 已裁为前 15 秒，直接作为唯一音色底样使用（不要用 3 秒的 `intro-voiceover.mp3`，也无需再手动裁剪）。
 - 参考音必须无 BGM、无混响、单人干声。
 
 ### Prompt 固定结构
