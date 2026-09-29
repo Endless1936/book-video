@@ -120,6 +120,7 @@ export function deriveGeneratedVoiceoverSplit(
   }
   if (
     !alignment.timestampsAvailable
+    || alignment.timelineEstimated === true
     || !leadIn.tokenOffsetsAvailable
     || !alignment.firstScriptTokenOffsetAvailable
     || !Number.isFinite(leadIn.end)
@@ -127,7 +128,9 @@ export function deriveGeneratedVoiceoverSplit(
   ) {
     throw splitError(
       "generated_greeting_timestamps_missing",
-      "Whisper token timestamps are required to separate the cloned greeting from the script audio.",
+      alignment.timelineEstimated
+        ? "Whisper token offsets are incomplete; the greeting/script boundary cannot be split automatically. Keep the previous voiceover and use the Jianying path, or regenerate the audio so whisper produces per-token offsets."
+        : "Whisper token timestamps are required to separate the cloned greeting from the script audio.",
     );
   }
   if (!Number.isFinite(standardIntroDuration) || standardIntroDuration <= 0) {

@@ -129,10 +129,13 @@ export function flattenWhisperCharacters(asr) {
     }
   });
 
-  // If every recognized character ended up with finite (possibly synthesized) timestamps,
-  // treat the timeline as usable even when a few raw tokens lacked offsets.
+  // hasTokenTimestamps stays true only when every recognized character came
+  // from a real whisper token offset. Characters that were placed by our
+  // fallback (lastEnd interpolation) are finite but estimated — we surface that
+  // separately as timelineEstimated so downstream callers (greeting split) can
+  // require real anchors for boundary decisions.
   const allFinite = characters.length > 0 && characters.every(c => Number.isFinite(c.start) && Number.isFinite(c.end));
-  return { characters, hasTokenTimestamps: allFinite, usedSegmentFallback };
+  return { characters, hasTokenTimestamps, usedSegmentFallback, timelineEstimated: allFinite && !hasTokenTimestamps };
 }
 
 function alignCharacterSequences(expected, recognized) {
@@ -246,7 +249,11 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     contentValid: false,
     sequenceMappable: false,
     textAvailable: recognized.length > 0,
-    timestampsAvailable: flattened.hasTokenTimestamps && recognized.every((item) => Number.isFinite(item.start) && Number.isFinite(item.end)),
+    // timestampsAvailable = we can produce a numeric timeline for captions.
+    // timelineEstimated = some numbers came from our fallback, not real whisper
+    // token offsets. The greeting split must require real anchors regardless.
+    timestampsAvailable: recognized.every((item) => Number.isFinite(item.start) && Number.isFinite(item.end)),
+    timelineEstimated: flattened.timelineEstimated === true,
     usedSegmentFallback: flattened.usedSegmentFallback,
     captions: [],
     firstScriptTokenTime: null,
@@ -366,16 +373,19 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     .sort(([left], [right]) => left - right)[0];
   const firstScriptIndex = firstMappedTitleCharacter?.[1];
   const firstRecognizedIndex = Number.isInteger(firstScriptIndex) ? firstScriptIndex + alignmentOffset : null;
-  const firstScriptCharacter = Number.isInteger(firstRecognizedIndex) ? recognized[firstRecognizedIndex] : null;
-  // Use the first script character that has a real token timestamp (not a
-  // synthesized one) as the title start, so a clean gap remains after the greeting.
-  const titleScriptCharacters = recognized
-    .map((ch, idx) => ({ ch, idx }))
-    .filter(({ idx }) => aligned.expectedToRecognizedInverse?.has?.(idx) || true);
+
+  // Title start: only consider recognized characters that are actually mapped to
+  // the title row (rowIndex === 0). Do NOT scan forward through the whole transcript
+  // — borrowing a body-token timestamp as the title start is unsound.
+  const titleRecognizedIndexes = [...aligned.expectedToRecognized.entries()]
+    .filter(([expectedIndex]) => expected[expectedIndex]?.rowIndex === 0)
+    .map(([, recognizedIndex]) => recognizedIndex + alignmentOffset)
+    .sort((a, b) => a - b);
   let firstScript = null;
-  for (let i = firstRecognizedIndex; i < recognized.length; i += 1) {
-    if (recognized[i].timestampSource === "token" && Number.isFinite(recognized[i].start)) {
-      firstScript = recognized[i];
+  for (const idx of titleRecognizedIndexes) {
+    const ch = recognized[idx];
+    if (ch && ch.timestampSource === "token" && Number.isFinite(ch.start)) {
+      firstScript = ch;
       break;
     }
   }

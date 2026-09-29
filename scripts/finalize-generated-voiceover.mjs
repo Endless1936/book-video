@@ -123,44 +123,46 @@ if (rawAudioStream?.codec_name !== "mp3") {
     code: "generated_voiceover_not_mp3",
   });
 }
-// Guard against using a whisper-downgraded copy as the master. whisper-cli reads
-// this file directly and resamples internally, so the raw file should always be
-// the high-fidelity TTS output — not a 16kHz mono mp3 produced for whisper.
+// Warn (don't hard-reject) if the raw voiceover looks like a whisper-downgraded
+// copy. whisper-cli resamples internally, so the raw file should be the high-fidelity
+// TTS master — but some TTS engines legitimately output 44.1kHz/128kbps, so this
+// is a warning, not a gate.
 const rawSampleRate = Number(rawAudioStream?.sample_rate || 0);
 const rawBitRate = Number(rawVoiceover.probe.format?.bit_rate || 0);
 if (rawSampleRate && rawSampleRate < 32000) {
-  throw new WorkflowError(
-    `Generated raw voiceover sample rate is ${rawSampleRate} Hz, below 32 kHz. ` +
-    `This looks like a whisper-downgraded copy, not the high-fidelity TTS master. ` +
-    `whisper-cli resamples internally; keep the original high-fidelity audio as raw.`,
-    { code: "generated_voiceover_low_sample_rate" },
+  console.warn(
+    `[voiceover] WARNING: raw voiceover sample rate is ${rawSampleRate} Hz (< 32 kHz). ` +
+    `If this is the high-fidelity TTS master, ignore this warning. If it was a 16kHz copy ` +
+    `made for whisper, replace it — whisper-cli resamples internally and the final mix will sound muffled.`,
   );
 }
 if (rawBitRate && rawBitRate < 160000) {
-  throw new WorkflowError(
-    `Generated raw voiceover bitrate is ${Math.round(rawBitRate / 1000)} kbps, below 160 kbps. ` +
-    `This looks like a whisper-downgraded copy, not the high-fidelity TTS master.`,
-    { code: "generated_voiceover_low_bitrate" },
+  console.warn(
+    `[voiceover] WARNING: raw voiceover bitrate is ${Math.round(rawBitRate / 1000)} kbps (< 160 kbps). ` +
+    `If this is the high-fidelity TTS master, ignore this warning. If it was a whisper-downgraded copy, replace it.`,
   );
 }
-// Guard against long leading silence, which confuses whisper's greeting detection
-// (the cloned "今天分享的是" prefix can get placed at t=0 while real speech starts
-// several seconds in).
+// Guard against long LEADING silence (start ≈ 0 AND end > 3s). Mid-speech pauses
+// are normal and must not be flagged.
 const leadingSilenceDetect = spawnSync("ffmpeg", [
   "-hide_banner", "-i", rawPath,
   "-af", "silencedetect=noise=-35dB:d=2",
   "-f", "null", "-",
 ], { encoding: "utf8" });
 const silenceLog = `${leadingSilenceDetect.stderr || ""}`;
-const leadingMatch = silenceLog.match(/silence_start: ([\d.]+)/);
-if (leadingMatch && Number(leadingMatch[1]) > 3) {
-  const leadSec = Number(leadingMatch[1]).toFixed(1);
-  throw new WorkflowError(
-    `Generated raw voiceover has ${leadSec}s of leading silence. ` +
-    `Trim it (e.g. ffmpeg -af "atrim=${Number(leadingMatch[1]).toFixed(2)},asetpts=PTS-STARTPTS") ` +
-    `so whisper can place the greeting correctly.`,
-    { code: "generated_voiceover_long_leading_silence" },
-  );
+const leadingSilenceMatch = silenceLog.match(/silence_start: ([\d.]+)\s*\n\s*silence_end: ([\d.]+)/);
+if (leadingSilenceMatch) {
+  const sStart = Number(leadingSilenceMatch[1]);
+  const sEnd = Number(leadingSilenceMatch[2]);
+  // Leading silence: starts near 0 (within 0.5s) and lasts more than 3s.
+  if (sStart < 0.5 && sEnd > 3) {
+    throw new WorkflowError(
+      `Generated raw voiceover has ${sEnd.toFixed(1)}s of leading silence. ` +
+      `Trim it (e.g. ffmpeg -af "atrim=${sEnd.toFixed(2)},asetpts=PTS-STARTPTS") ` +
+      `so whisper can place the greeting correctly.`,
+      { code: "generated_voiceover_long_leading_silence" },
+    );
+  }
 }
 if (!fs.existsSync(modelPath) || fs.statSync(modelPath).size < 100 * 1024 * 1024) {
   throw new WorkflowError(`A valid local Whisper model is required for the generated-voice alignment gate: ${modelPath}`, {
