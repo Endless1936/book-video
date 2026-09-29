@@ -193,7 +193,7 @@ const zeroWidthTokenOffsets = alignScriptToWhisper(titleRows, asr([
 ]), { audioDuration: 4 });
 assert.equal(zeroWidthTokenOffsets.timestampsAvailable, true, "zero-width offsets do not discard other real row anchors");
 assert.equal(zeroWidthTokenOffsets.captions.length, titleRows.length);
-assert.equal(zeroWidthTokenOffsets.diagnostics.contentValid, true);
+assert.equal(zeroWidthTokenOffsets.contentValid, true);
 assert.equal(zeroWidthTokenOffsets.diagnostics.requiresAgentReview, true);
 assert.equal(zeroWidthTokenOffsets.timelineEstimated, true);
 assert.ok(zeroWidthTokenOffsets.diagnostics.issues.some((issue) => issue.code === "zero_width_token_offsets"));
