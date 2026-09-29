@@ -110,6 +110,36 @@ function wrapCaptionText(text, maxClauseChars = 12) {
   return lines.map((line) => esc(line)).join("<br />");
 }
 
+// Split caption rows into visual scenes of 3-5 rows each.
+// Cuts prefer natural pauses (big gap between consecutive rows) and balanced durations.
+function segmentCaptionRows(rows, minSize = 3, maxSize = 5) {
+  const n = rows.length;
+  if (n <= maxSize) return [{ start: rows[0].start, end: rows[n - 1].end, rows }];
+  const dp = Array.from({ length: n + 1 }, () => ({ cost: Infinity, prev: -1 }));
+  dp[0] = { cost: 0, prev: -1 };
+  const totalDur = Math.max(0.1, rows[n - 1].end - rows[0].start);
+  const ideal = totalDur / Math.max(1, Math.ceil(n / maxSize));
+  for (let i = minSize; i <= n; i++) {
+    for (let s = minSize; s <= maxSize; s++) {
+      const j = i - s;
+      if (j < 0 || !Number.isFinite(dp[j].cost)) continue;
+      const segDur = rows[i - 1].end - rows[j].start;
+      const gap = j === 0 ? 0 : rows[j].start - rows[j - 1].end;
+      const cost = dp[j].cost + Math.pow(segDur - ideal, 2) * 0.05 - gap * 1.5;
+      if (cost < dp[i].cost) dp[i] = { cost, prev: j };
+    }
+  }
+  const segs = [];
+  let i = n;
+  while (i > 0) {
+    const j = dp[i].prev;
+    if (j < 0) break;
+    segs.unshift({ start: rows[j].start, end: rows[i - 1].end, rows: rows.slice(j, i) });
+    i = j;
+  }
+  return segs;
+}
+
 function createIntro(brief) {
   const displayTitle = getDisplayTitle(brief);
   const titleLayout = getTitleLayout(displayTitle);
@@ -184,10 +214,16 @@ function createBody(brief, rows, audioTimings) {
   const displayTitle = getDisplayTitle(brief);
   const titleLayout = getTitleLayout(displayTitle);
   fs.mkdirSync(path.join(bodyDir, "media"), { recursive: true });
-  copyFile(path.join(imagesDir, "result-bridge.png"), path.join(bodyDir, "media", "00-result-bridge.png"));
-  copyFile(path.join(imagesDir, "atmosphere-1.png"), path.join(bodyDir, "media", "01-atmosphere.png"));
-  copyFile(path.join(imagesDir, "atmosphere-2.png"), path.join(bodyDir, "media", "02-atmosphere.png"));
-  copyFile(path.join(imagesDir, "atmosphere-3.png"), path.join(bodyDir, "media", "03-atmosphere.png"));
+  // result-bridge.png is the fixed opening bridge behind the book-title card.
+  // Body content scenes use atmosphere-1..N in order (one per DP segment).
+  const bridgeImage = path.join(imagesDir, "result-bridge.png");
+  const sceneImageSources = [];
+  for (let i = 1; fs.existsSync(path.join(imagesDir, `atmosphere-${i}.png`)); i++) {
+    sceneImageSources.push(path.join(imagesDir, `atmosphere-${i}.png`));
+  }
+  if (fs.existsSync(bridgeImage)) {
+    copyFile(bridgeImage, path.join(bodyDir, "media", "scene-bridge.jpg"));
+  }
   fs.mkdirSync(path.join(bodyDir, "fonts"), { recursive: true });
   copyFile(
     path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "SmileySans-Oblique.ttf"),
@@ -244,8 +280,12 @@ function createBody(brief, rows, audioTimings) {
     ? Number(audioTimings.duration.toFixed(2))
     : Number((cursor + 0.8).toFixed(2));
   const safeDuration = Number(Math.max(duration, lastCaptionEnd + 0.4).toFixed(2));
-  const sceneTwo = Number((safeDuration * 0.34).toFixed(2));
-  const sceneThree = Number((safeDuration * 0.67).toFixed(2));
+  const segments = segmentCaptionRows(speechTimings, 3, 5);
+  if (segments.length !== sceneImageSources.length) {
+    throw new Error(`Need ${segments.length} scene images (3-5 rows each) in images/ but found ${sceneImageSources.length}`);
+  }
+  segments.forEach((seg, i) => copyFile(sceneImageSources[i], path.join(bodyDir, "media", `scene-${i}.jpg`)));
+  console.log(`[scenes] ${segments.length} scenes: ` + segments.map((s) => `${s.rows.length}行@${s.start.toFixed(1)}s`).join(" | "));
 
   const captionHtml = captionRows
     .map((row) => {
@@ -257,6 +297,32 @@ function createBody(brief, rows, audioTimings) {
   const revealJs = timings
     .map((item) => `      revealCaption("${item.selector}", ${item.start}, ${item.hold});`)
     .join("\n");
+
+  const bodyStart = segments[0].start; // bridge covers the book-title moment up to first subtitle
+  const sceneCss = [
+    `      .sc-bridge .photo { background-image: url("media/scene-bridge.jpg"); }`,
+    ...segments.map((_, i) => `      .sc${i} .photo { background-image: url("media/scene-${i}.jpg"); }`),
+  ].join("\n");
+  const sceneHtml = [
+    `<section class="scene sc-bridge" data-layout-ignore><div class="photo" data-layout-ignore></div></section>`,
+    ...segments.map((_, i) => `<section class="scene sc${i}" data-layout-ignore><div class="photo" data-layout-ignore></div></section>`),
+  ].join("\n      ");
+  const sceneTl = [];
+  // Bridge is the opening title-card scene; crossfade into body scene0 at first subtitle.
+  sceneTl.push(`      tl.fromTo(".sc-bridge .photo", { scale: 1.03, x: 0, y: 0 }, { scale: 1.06, x: 0, y: 0, duration: ${Number((bodyStart + 0.6).toFixed(2))}, ease: "sine.inOut" }, 0);`);
+  sceneTl.push(`      tl.fromTo(".sc0", { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "sine.inOut" }, ${bodyStart});`);
+  sceneTl.push(`      tl.to(".sc-bridge", { opacity: 0, duration: 0.7, ease: "sine.inOut" }, ${bodyStart});`);
+  sceneTl.push(`      tl.fromTo(".sc0 .photo", { scale: 1.035, x: 8, y: -4 }, { scale: 1.105, x: -16, y: 12, duration: ${Number((safeDuration - bodyStart).toFixed(2))}, ease: "sine.inOut" }, ${bodyStart});`);
+  for (let i = 1; i < segments.length; i++) {
+    const t = segments[i].start;
+    const dur = Number((safeDuration - t).toFixed(2));
+    const dirX = i % 2 === 0 ? -12 : 14;
+    const dirY = i % 2 === 0 ? -8 : 10;
+    sceneTl.push(`      tl.fromTo(".sc${i}", { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "sine.inOut" }, ${t});`);
+    sceneTl.push(`      tl.to(".sc${i - 1}", { opacity: 0, duration: 0.7, ease: "sine.inOut" }, ${t});`);
+    sceneTl.push(`      tl.fromTo(".sc${i} .photo", { scale: 1.035, x: ${-dirX}, y: ${-dirY} }, { scale: 1.1, x: ${dirX}, y: ${dirY}, duration: ${dur}, ease: "sine.inOut" }, ${t});`);
+  }
+  const sceneTimeline = sceneTl.join("\n");
 
   const html = `<!doctype html>
 <html lang="zh-CN">
@@ -274,10 +340,7 @@ function createBody(brief, rows, audioTimings) {
       .scene { position: absolute; inset: 0; opacity: 0; overflow: hidden; }
       .scene:first-of-type { opacity: 1; }
       .photo { position: absolute; inset: -22px; z-index: 1; background-size: cover; background-position: center; background-repeat: no-repeat; transform-origin: 50% 50%; will-change: transform; }
-      .bridge .photo { inset: 0; background-image: url("media/00-result-bridge.png"); }
-      .s1 .photo { background-image: url("media/01-atmosphere.png"); }
-      .s2 .photo { background-image: url("media/02-atmosphere.png"); }
-      .s3 .photo { background-image: url("media/03-atmosphere.png"); }
+${sceneCss}
       .book-mark { position: absolute; inset: 0; z-index: 8; text-align: center; color: #fff; opacity: 1; transform-origin: 50% 120px; }
       .book-title { position: absolute; left: 28px; right: 28px; top: 70px; display: block; font-size: ${titleLayout.fontSize}px; line-height: 1; font-weight: 900; letter-spacing: 0.04em; white-space: nowrap; text-shadow: 0 7px 18px rgba(0, 0, 0, 0.96); }
       .book-author { position: absolute; left: 36px; right: 36px; top: ${titleLayout.authorTop}px; display: block; font-size: 34px; line-height: 1; font-weight: 900; letter-spacing: 0.06em; white-space: nowrap; text-shadow: 0 5px 14px rgba(0, 0, 0, 0.96); }
@@ -288,10 +351,7 @@ function createBody(brief, rows, audioTimings) {
   </head>
   <body>
     <main id="root" data-composition-id="main" data-start="0" data-duration="${safeDuration}" data-width="720" data-height="960">
-      <section class="scene bridge" data-layout-ignore><div class="photo" data-layout-ignore></div></section>
-      <section class="scene s1" data-layout-ignore><div class="photo" data-layout-ignore></div></section>
-      <section class="scene s2" data-layout-ignore><div class="photo" data-layout-ignore></div></section>
-      <section class="scene s3" data-layout-ignore><div class="photo" data-layout-ignore></div></section>
+${sceneHtml}
       <div class="book-mark" data-layout-ignore>
         <span class="book-title">${esc(titleLayout.wrappedTitle)}</span>
         <span class="book-author">${esc(brief.author)} / 著</span>
@@ -301,16 +361,7 @@ ${captionHtml}
     <script>
       window.__timelines = window.__timelines || {};
       var tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
-      tl.fromTo(".s1", { opacity: 0 }, { opacity: 1, duration: 0.58, ease: "sine.inOut" }, 0.32);
-      tl.to(".bridge", { opacity: 0, duration: 0.58, ease: "sine.inOut" }, 0.32);
-      tl.fromTo(".bridge .photo", { scale: 1.035, x: 0, y: 0 }, { scale: 1.045, x: 0, y: 0, duration: 0.9, ease: "sine.inOut" }, 0);
-      tl.fromTo(".s1 .photo", { scale: 1.035, x: 8, y: -4 }, { scale: 1.105, x: -16, y: 12, duration: ${sceneTwo + 1.2}, ease: "sine.inOut" }, 0);
-      tl.fromTo(".s2", { opacity: 0 }, { opacity: 1, duration: 0.72, ease: "sine.inOut" }, ${sceneTwo});
-      tl.to(".s1", { opacity: 0, duration: 0.72, ease: "sine.inOut" }, ${sceneTwo});
-      tl.fromTo(".s2 .photo", { scale: 1.035, x: -10, y: 6 }, { scale: 1.095, x: 14, y: -8, duration: ${sceneThree - sceneTwo + 1.2}, ease: "sine.inOut" }, ${sceneTwo});
-      tl.fromTo(".s3", { opacity: 0 }, { opacity: 1, duration: 0.76, ease: "sine.inOut" }, ${sceneThree});
-      tl.to(".s2", { opacity: 0, duration: 0.76, ease: "sine.inOut" }, ${sceneThree});
-      tl.fromTo(".s3 .photo", { scale: 1.035, x: 10, y: 8 }, { scale: 1.1, x: -12, y: -8, duration: ${safeDuration - sceneThree}, ease: "sine.inOut" }, ${sceneThree});
+${sceneTimeline}
       function revealCaption(selector, start, hold) {
         tl.fromTo(selector, { opacity: 0, y: 12, scaleX: 0.92, scaleY: 0.99 }, { opacity: 1, y: 0, scaleX: 1, scaleY: 1, duration: 0.16, ease: "power3.out" }, start);
         tl.set(selector, { opacity: 0, y: -10 }, start + hold);
