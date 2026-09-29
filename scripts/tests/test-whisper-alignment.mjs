@@ -126,6 +126,7 @@ const partialBodyTime = alignScriptToWhisper(titleRows, asr([
   ] },
 ]));
 assert.equal(partialBodyTime.timestampsAvailable, false);
+assert.equal(partialBodyTime.captions.length, 0, "a script row without any real time anchor uses the caller fallback");
 assert.equal(partialBodyTime.sequenceMappable, true);
 assert.equal(partialBodyTime.firstScriptTokenOffsetAvailable, true);
 assert.equal(partialBodyTime.diagnostics.detectedLeadIn.tokenOffsetsAvailable, true);
@@ -147,6 +148,33 @@ assert.throws(() => deriveGeneratedVoiceoverSplit(missingTitleFirstTime, {
   standardIntroDuration: 3.024,
   rawDuration: 8,
 }));
+
+const rowAnchorsWithMissingEdgeTokens = alignScriptToWhisper(titleRows, asr([
+  { text: "被讨厌的勇气", offsets: { from: 800, to: 1400 }, tokens: [
+    { text: "被" },
+    token("讨厌", 900, 1000),
+    token("的", 1000, 1100),
+    token("勇气", 1100, 1400),
+  ] },
+  { text: "你有没有失去过一个重要的人", offsets: { from: 1500, to: 2800 }, tokens: [
+    { text: "你" },
+    token("有没有", 1500, 1750),
+    token("失去过", 1750, 2050),
+    token("一个重要", 2050, 2500),
+    { text: "的人" },
+  ] },
+]), { audioDuration: 4 });
+assert.equal(rowAnchorsWithMissingEdgeTokens.timestampsAvailable, true, "each row can use its real token anchors despite missing edge tokens");
+assert.equal(rowAnchorsWithMissingEdgeTokens.captions.length, titleRows.length);
+assert.deepEqual(rowAnchorsWithMissingEdgeTokens.captions, [
+  { order: 1, start: 0.9, end: 1.4 },
+  { order: 2, start: 1.5, end: 2.5 },
+]);
+assert.equal(rowAnchorsWithMissingEdgeTokens.diagnostics.requiresAgentReview, true);
+assert.ok(rowAnchorsWithMissingEdgeTokens.diagnostics.issues.some((issue) => issue.code === "token_timestamps_missing"));
+assert.ok(!rowAnchorsWithMissingEdgeTokens.diagnostics.issues.some((issue) => issue.code === "invalid_token_offsets"));
+assert.ok(!rowAnchorsWithMissingEdgeTokens.diagnostics.issues.some((issue) => issue.code === "whisper_offsets_out_of_audio_range"));
+assert.ok(!rowAnchorsWithMissingEdgeTokens.diagnostics.issues.some((issue) => issue.code === "non_monotonic_token_offsets"));
 
 const firstTitleCharacterTypo = alignScriptToWhisper(titleRows, asr([
   { text: "今天分享的是", offsets: { from: 0, to: 500 }, tokens: [token("今天分享的是", 0, 500)] },
@@ -255,8 +283,8 @@ assert.equal(shortOmission.diagnostics.rows[1].recognizedText, "甲");
 assert.equal(shortOmission.diagnostics.requiresAgentReview, true);
 assert.equal("text" in shortOmission.captions[1], false);
 
-// A lead-in and body may share one silence segment. Without token offsets, the
-// interpolated segment timestamps cannot tell where the lead-in ends.
+// A lead-in and body may share one silence segment. Segment offsets alone cannot
+// tell where the lead-in ends.
 const oneSegmentNoTokenOffsets = alignScriptToWhisper(overlappingIntroRows, asr([
   {
     text: overlappingIntroText,
@@ -333,6 +361,16 @@ assert.equal(mildOvershootClamped.ok, false, "clamped overshoot still flags a re
 assert.ok(mildOvershootClamped.captions.every((caption) => caption.start >= 0 && caption.end <= 4));
 assert.equal(mildOvershootClamped.captions.at(-1).end, 4);
 assert.ok(mildOvershootClamped.diagnostics.issues.some((issue) => issue.code === "whisper_offsets_clamped"));
+
+const mildFinalTokenStartAndEndOvershoot = alignScriptToWhisper(rows, asr([
+  { text: "你有没有失去过一个重要的人", offsets: { from: 0, to: 1900 }, tokens: [token("你有没有失去过一个重要的人", 0, 1900)] },
+  { text: "后来才发现那时就是最好的时", offsets: { from: 2000, to: 3900 }, tokens: [token("后来才发现那时就是最好的时", 2000, 3900)] },
+  { text: "候", offsets: { from: 4005, to: 4105 }, tokens: [token("候", 4005, 4105)] },
+]), { audioDuration: 4 });
+assert.equal(mildFinalTokenStartAndEndOvershoot.timestampsAvailable, true, "mild final-token start and end overshoot is clamped as a pair");
+assert.ok(mildFinalTokenStartAndEndOvershoot.captions.every((caption) => caption.start >= 0 && caption.end <= 4 && caption.end > caption.start));
+assert.equal(mildFinalTokenStartAndEndOvershoot.captions.at(-1).end, 4);
+assert.ok(mildFinalTokenStartAndEndOvershoot.diagnostics.issues.some((issue) => issue.code === "whisper_offsets_clamped"));
 
 const beyondAudioEnd = alignScriptToWhisper(rows, asr([
   { text: "你有没有失去过一个重要的人后来才发现那时就是最好的时候", offsets: { from: 0, to: 8000 }, tokens: [

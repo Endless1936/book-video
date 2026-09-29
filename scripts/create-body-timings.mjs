@@ -254,14 +254,14 @@ if (!whisperFailure) {
       scriptAlignment: whisperAlignment.diagnostics,
     };
     if (alignment.requiresAgentReview) {
-      console.warn("Whisper alignment passed with tolerated recognition differences; review each row's recognizedText and coverage before rendering.");
+      console.warn("Whisper alignment passed with review notes; inspect the row text and available timing anchors before rendering.");
     }
 
     if (captions.length && speechSegments.length) {
       const firstTokenStart = captions[0].start;
-      alignment.firstTokenToCaptionStartSeconds = Number(Math.abs(
-        firstTokenStart - whisperAlignment.firstScriptTokenTime,
-      ).toFixed(2));
+      alignment.firstTokenToCaptionStartSeconds = Number.isFinite(whisperAlignment.firstScriptTokenTime)
+        ? Number(Math.abs(firstTokenStart - whisperAlignment.firstScriptTokenTime).toFixed(2))
+        : null;
       const silenceSegmentIndex = speechSegments.findIndex((segment) =>
         segment.start <= firstTokenStart + 0.15 && segment.end >= firstTokenStart - 0.15);
       const silenceStart = silenceSegmentIndex >= 0 ? speechSegments[silenceSegmentIndex].start : null;
@@ -279,6 +279,7 @@ if (!whisperFailure) {
     } else {
       alignment.requiresAgentReview = true;
       alignment.firstTokenToCaptionStartSeconds = captions.length
+        && Number.isFinite(whisperAlignment.firstScriptTokenTime)
         ? Number(Math.abs(captions[0].start - whisperAlignment.firstScriptTokenTime).toFixed(2))
         : null;
       alignment.captionStartCrossCheckPassed = false;

@@ -86,55 +86,8 @@ function appendTimedText(target, value, offsets, metadata = {}) {
   });
 }
 
-// Whisper.cpp often omits per-token offsets for single-character tokens
-// (e.g. 别, 而, 怕, 所, 以). Leaving those characters with null timestamps
-// makes caption generation impossible and forces a coarse duration fallback.
-// Interpolate them from adjacent real anchors WITHIN THE SAME segment only —
-// never across segments and never inventing times without any anchor.
-// Interpolated characters keep the "interpolated" source so callers can tell
-// real token times from estimates.
-function interpolateMissingTimestamps(characters) {
-  const indexesBySegment = new Map();
-  characters.forEach((character, index) => {
-    if (!indexesBySegment.has(character.segmentIndex)) indexesBySegment.set(character.segmentIndex, []);
-    indexesBySegment.get(character.segmentIndex).push(index);
-  });
-  for (const indexes of indexesBySegment.values()) {
-    const timed = indexes.filter((i) => Number.isFinite(characters[i].start) && Number.isFinite(characters[i].end));
-    if (!timed.length) continue; // No anchor in this segment: stay missing, do not invent.
-    for (const index of indexes) {
-      const character = characters[index];
-      if (Number.isFinite(character.start)) continue;
-      let prevIndex = -1;
-      let nextIndex = -1;
-      for (const timedIndex of timed) {
-        if (timedIndex < index) prevIndex = timedIndex;
-        if (timedIndex > index) { nextIndex = timedIndex; break; }
-      }
-      const prev = prevIndex >= 0 ? characters[prevIndex] : null;
-      const next = nextIndex >= 0 ? characters[nextIndex] : null;
-      if (prev && next) {
-        const span = nextIndex - prevIndex;
-        const ratio = (index - prevIndex) / span;
-        character.start = prev.end + (next.start - prev.end) * ratio;
-        character.end = prev.end + (next.end - prev.end) * ratio;
-      } else if (prev) {
-        const step = Math.max(0.05, prev.end - prev.start);
-        character.start = prev.end;
-        character.end = prev.end + step;
-      } else if (next) {
-        const step = Math.max(0.05, next.end - next.start);
-        character.end = next.start;
-        character.start = Math.max(0, next.start - step);
-      }
-      if (Number.isFinite(character.start) && Number.isFinite(character.end)) {
-        character.timestampSource = "interpolated";
-      }
-    }
-  }
-  return characters;
-}
-
+// Keep text for alignment when Whisper omits some token offsets; caption timing
+// uses the remaining real anchors per row and falls back when a row has none.
 export function flattenWhisperCharacters(asr) {
   const characters = [];
   let hasTokenTimestamps = true;
@@ -152,8 +105,11 @@ export function flattenWhisperCharacters(asr) {
         if (!offsets) {
           hasTokenTimestamps = false;
           usedSegmentFallback = true;
-          // Keep recognized text for sequence matching, but never invent token times.
-          appendTimedText(characters, token.text, null, { segmentIndex, timestampSource: "missing" });
+          // Keep text for sequence matching and distinguish absent from malformed offsets.
+          appendTimedText(characters, token.text, null, {
+            segmentIndex,
+            timestampSource: token?.offsets == null ? "missing" : "invalid",
+          });
           continue;
         }
         appendTimedText(characters, token.text, offsets, {
@@ -166,22 +122,21 @@ export function flattenWhisperCharacters(asr) {
       if (!normalized) return;
       hasTokenTimestamps = false;
       usedSegmentFallback = true;
-      appendTimedText(characters, segment.text, readOffsets(segment?.offsets), {
+      const offsets = readOffsets(segment?.offsets);
+      appendTimedText(characters, segment.text, offsets, {
         segmentIndex,
-        timestampSource: readOffsets(segment?.offsets) ? "segment" : "missing",
+        timestampSource: offsets ? "segment" : segment?.offsets == null ? "missing" : "invalid",
       });
     }
   });
 
   // Keep real token timestamps distinct from missing values. Caption timing can
   // fall back downstream; generated greeting splits need their own real anchors.
-  const interpolated = interpolateMissingTimestamps(characters);
-  const allFiniteAfterInterpolation = interpolated.length > 0 && interpolated.every(c => Number.isFinite(c.start) && Number.isFinite(c.end));
   return {
-    characters: interpolated,
+    characters,
     hasTokenTimestamps,
     usedSegmentFallback,
-    timelineEstimated: allFiniteAfterInterpolation && !hasTokenTimestamps,
+    timelineEstimated: characters.some((character) => character.timestampSource === "segment"),
   };
 }
 
@@ -296,10 +251,10 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     contentValid: false,
     sequenceMappable: false,
     textAvailable: recognized.length > 0,
-    // timestampsAvailable = we can produce a numeric timeline for captions.
-    // timelineEstimated = some numbers came from our fallback, not real whisper
-    // token offsets. The greeting split must require real anchors regardless.
-    timestampsAvailable: recognized.every((item) => Number.isFinite(item.start) && Number.isFinite(item.end)),
+    // Direct caption timing is available only when every script row has a real
+    // finite anchor. Missing token times are handled per row or by the caller's
+    // existing fallback; they are not themselves out-of-range timestamps.
+    timestampsAvailable: false,
     timelineEstimated: flattened.timelineEstimated === true,
     usedSegmentFallback: flattened.usedSegmentFallback,
     captions: [],
@@ -323,8 +278,17 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     result.diagnostics.audioBoundaryToleranceSeconds = 0.1;
   }
 
-  const tokensMonotonic = recognized.every((item, index) => index === 0
-    || item.start >= recognized[index - 1].start - 0.03);
+  // Missing offsets are absent evidence, not timestamps that run backwards.
+  let previousTimedStart = null;
+  let tokensMonotonic = true;
+  for (const item of recognized) {
+    if (!Number.isFinite(item.start) || !Number.isFinite(item.end)) continue;
+    if (previousTimedStart !== null && item.start < previousTimedStart - 0.03) {
+      tokensMonotonic = false;
+      break;
+    }
+    previousTimedStart = item.start;
+  }
   if (!tokensMonotonic) {
     result.timestampsAvailable = false;
     result.diagnostics.issues.push({
@@ -354,12 +318,12 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
   }
 
   const outOfRangeCharacters = finiteAudioDuration === null ? [] : recognized.filter((item) =>
-    !Number.isFinite(item.start)
-    || !Number.isFinite(item.end)
-    || item.start < 0
+    Number.isFinite(item.start)
+    && Number.isFinite(item.end)
+    && (item.start < 0
     || item.start >= finiteAudioDuration
     || item.end <= 0
-    || item.end > finiteAudioDuration + 0.1);
+    || item.end > finiteAudioDuration + 0.1));
   if (outOfRangeCharacters.length) {
     result.timestampsAvailable = false;
     result.diagnostics.issues.push({
@@ -389,10 +353,12 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
       message: "Whisper token offsets are missing; exact timestamp alignment is unavailable.",
     });
   }
-  if (recognized.some((item) => !Number.isFinite(item.start) || !Number.isFinite(item.end))) {
+  const invalidOffsetCharacters = recognized.filter((item) => item.timestampSource === "invalid");
+  if (invalidOffsetCharacters.length) {
     result.diagnostics.issues.push({
       code: "invalid_token_offsets",
-      message: "One or more recognized tokens have no valid offsets.from/to timestamps.",
+      message: "One or more Whisper tokens contain malformed offsets.from/to timestamps.",
+      count: invalidOffsetCharacters.length,
     });
   }
   if (!expected.length || !recognized.length) {
@@ -510,10 +476,14 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
       recognized: recognized[recognizedIndex + alignmentOffset],
     });
   }
+  const timedMappingsByRow = mappedByRow.map((mappings) => mappings
+    .filter(({ recognized: item }) => Number.isFinite(item.start) && Number.isFinite(item.end))
+    .sort((left, right) => left.recognized.start - right.recognized.start));
   let totalMatched = 0;
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const expectedCount = expected.filter((item) => item.rowIndex === rowIndex).length;
-    const mappings = mappedByRow[rowIndex].sort((left, right) => left.recognized.start - right.recognized.start);
+    const mappings = mappedByRow[rowIndex];
+    const timedMappings = timedMappingsByRow[rowIndex];
     const recognizedIndexes = [...aligned.expectedToRecognized]
       .filter(([expectedIndex]) => expected[expectedIndex].rowIndex === rowIndex)
       .map(([, recognizedIndex]) => recognizedIndex + alignmentOffset);
@@ -545,8 +515,8 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
       maxToleratedEditDistance: maxRowEditDistance,
       exactAnchors,
       exact: rowCoverage === 1 && rowMismatches === 0 && rowRecognizedText === expectedText,
-      timestampStart: mappings[0]?.recognized.start ?? null,
-      timestampEnd: mappings.at(-1)?.recognized.end ?? null,
+      timestampStart: timedMappings[0]?.recognized.start ?? null,
+      timestampEnd: timedMappings.at(-1)?.recognized.end ?? null,
     });
     const anchoredShortRowWithOneOmission = expectedCount <= 4
       && matchedCount > 0
@@ -617,7 +587,10 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
   result.diagnostics.contentCheck = "matched";
   result.diagnostics.requiresAgentReview = effectiveEditDistance > 0
     || effectiveEditDistance > reviewEditDistance
-    || result.diagnostics.rows.some((row) => !row.exact);
+    || result.diagnostics.rows.some((row) => !row.exact)
+    || !flattened.hasTokenTimestamps
+    || invalidOffsetCharacters.length > 0
+    || rawOutOfRangeCharacters.length > 0;
   if (result.diagnostics.requiresAgentReview) {
     result.diagnostics.contentCheck = "matched_with_asr_variance";
   }
@@ -650,13 +623,19 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     "script_row_text_mismatch",
     "script_text_mismatch",
   ]);
+  const unusableTimestampIssueCodes = new Set([
+    "non_monotonic_token_offsets",
+    "whisper_offsets_out_of_audio_range",
+  ]);
+  result.timestampsAvailable = timedMappingsByRow.every((mappings) => mappings.length > 0)
+    && !result.diagnostics.issues.some((issue) => unusableTimestampIssueCodes.has(issue.code));
   result.contentValid = result.diagnostics.issues.every((issue) => timestampIssueCodes.has(issue.code));
   result.sequenceMappable = result.diagnostics.issues.every((issue) =>
     timestampIssueCodes.has(issue.code) || reviewableTextIssueCodes.has(issue.code));
   result.ok = result.diagnostics.issues.length === 0;
   if (result.timestampsAvailable && totalMatched > 0) {
     result.captions = rows.map((row, rowIndex) => {
-      const mappings = mappedByRow[rowIndex].sort((left, right) => left.recognized.start - right.recognized.start);
+      const mappings = timedMappingsByRow[rowIndex];
       const rawStart = mappings[0]?.recognized.start;
       const rawEnd = mappings.at(-1)?.recognized.end;
       const start = finiteAudioDuration === null
