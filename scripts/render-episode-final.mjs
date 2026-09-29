@@ -300,9 +300,7 @@ fs.mkdirSync(rendersDir, { recursive: true });
 run("node", ["scripts/create-episode-preview.mjs", episodeName, scriptVersion]);
 fs.mkdirSync(finalCandidateDir, { recursive: true });
 run("node", ["scripts/process-voiceover.mjs", introVoice, introStoryVoice, "story"]);
-if (!generatedAudioPairIsCurrent) {
-  run("node", ["scripts/process-voiceover.mjs", bodyVoice, bodyStoryVoice, "story"]);
-}
+run("node", ["scripts/process-voiceover.mjs", bodyVoice, bodyStoryVoice, "story"]);
 run("npx", ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, "render", "--quality", "standard", "--output", "renders/intro.mp4"], { cwd: introDir });
 run("npx", ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, "render", "--quality", "standard", "--output", "renders/body.mp4"], { cwd: bodyDir });
 
