@@ -213,15 +213,33 @@ if (!whisperFailure) {
     );
   }
   skipLeading = skipLeadingResult.skipLeading;
-  if (whisperAlignment.textAvailable && !whisperAlignment.contentValid) {
-    // Whisper is used for timestamps only. Simplified-Chinese homophone typos
-    // (满意→买你, 课题→客题) are expected and must not block timing output;
-    // the approved script.csv remains the subtitle truth.
+  if (whisperAlignment.textAvailable && !whisperAlignment.sequenceMappable) {
     const differences = whisperAlignment.diagnostics.issues.map((issue) => issue.message).join(" ");
-    console.warn(`Whisper recognized text differs from the script (expected homophone typos); using its timestamps anyway: ${differences}`);
+    throw new WorkflowError(`Voiceover/script sequence mismatch; timing generation is blocked: ${differences}`, {
+      code: "voiceover_script_alignment_failed",
+      details: {
+        scriptVersion,
+        alignment: whisperAlignment.diagnostics,
+        voiceover: path.relative(ROOT, voicePath),
+        whisperJson: fs.existsSync(`${asrBase}.json`) ? path.relative(ROOT, `${asrBase}.json`) : null,
+      },
+      nextActions: [
+        "Review the listed missing, extra, or out-of-order speech against the voiceover.",
+        "Correct or replace the voiceover, then rerun timing generation after the script sequence can be mapped.",
+      ],
+    });
+  }
+  if (whisperAlignment.textAvailable && !whisperAlignment.contentValid) {
+    const differences = whisperAlignment.diagnostics.issues.map((issue) => issue.message).join(" ");
+    console.warn(`Whisper text differs from the approved script; mapping by script order and retaining script.csv as subtitle truth: ${differences}`);
     whisperAlignment.diagnostics.requiresAgentReview = true;
   }
-  if (whisperAlignment.ok) {
+  if (
+    whisperAlignment.sequenceMappable
+    && whisperAlignment.timestampsAvailable
+    && whisperAlignment.captions.length === rows.length
+    && whisperAlignment.captions.every((caption) => Number.isFinite(caption.start) && Number.isFinite(caption.end))
+  ) {
     captions = whisperAlignment.captions;
     alignment = {
       method: "whisper-token-script-alignment",

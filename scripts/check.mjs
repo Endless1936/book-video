@@ -59,6 +59,15 @@ if (tests.status !== 0) throw new Error("Repository tests failed");
 const templateSourceDir = path.join(ROOT, "templates", "shared-video-template", "intro");
 const templateDir = fs.mkdtempSync(path.join(os.tmpdir(), "book-video-hyperframes-check-"));
 fs.cpSync(templateSourceDir, templateDir, { recursive: true });
+fs.mkdirSync(path.join(templateDir, "fonts"), { recursive: true });
+fs.copyFileSync(
+  path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "SmileySans-Oblique.ttf"),
+  path.join(templateDir, "fonts", "SmileySans-Oblique.ttf"),
+);
+fs.copyFileSync(
+  path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "LICENSE.txt"),
+  path.join(templateDir, "fonts", "LICENSE.txt"),
+);
 const resultPlaceholder = path.join(templateDir, "media", "pages", "result.png");
 const resultSource = path.join(templateDir, "media", "intro-background.jpg");
 const resultConversion = run("ffmpeg", [

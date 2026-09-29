@@ -63,7 +63,25 @@ assert.equal(typo.diagnostics.contentCheck, "matched_with_asr_variance");
 assert.equal(typo.diagnostics.rows[1].recognizedText, "后来才发现那时就是最好的时侯");
 assert.ok(typo.diagnostics.rows[1].coverage > 0.9);
 assert.equal(typo.diagnostics.rows[1].exact, false);
+assert.equal(typo.sequenceMappable, true);
 assert.equal("text" in typo.captions[1], false, "Whisper wording must not replace script subtitle text");
+
+// Simplified/traditional conversion can create many character differences while
+// preserving a complete row-order map; warn for review rather than blocking timing.
+const traditionalRows = [
+  { order: "1", text: "书名" },
+  { order: "2", text: "发展后书" },
+];
+const traditionalText = "书名發展後書";
+const traditional = alignScriptToWhisper(traditionalRows, asr([
+  { text: traditionalText, offsets: { from: 0, to: 1800 }, tokens: [token(traditionalText, 0, 1800)] },
+]), { episodeTitle: "书名", audioDuration: 2 });
+assert.equal(traditional.contentValid, false);
+assert.equal(traditional.sequenceMappable, true);
+assert.equal(traditional.ok, false);
+assert.equal(traditional.diagnostics.requiresAgentReview, true);
+assert.equal(traditional.captions.length, traditionalRows.length);
+assert.ok(traditional.captions.every((caption) => Number.isFinite(caption.start) && Number.isFinite(caption.end)));
 
 // A dropped character in a longer row stays useful as a timing clue and is
 // surfaced for review while captions remain timing-only.
@@ -226,6 +244,7 @@ const missingRow = alignScriptToWhisper(rows, asr([
   { text: "你有没有失去过一个重要的人", offsets: { from: 0, to: 2000 }, tokens: [token("你有没有失去过一个重要的人", 0, 2000)] },
 ]));
 assert.equal(missingRow.ok, false);
+assert.equal(missingRow.sequenceMappable, false);
 assert.ok(missingRow.diagnostics.issues.some((issue) => issue.code === "script_row_missing_or_mismatched"));
 
 const reordered = alignScriptToWhisper(rows, asr([

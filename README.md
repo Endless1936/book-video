@@ -39,7 +39,7 @@ Copyright (c) 2026 prototech, endless, and 未济.
 
 ## 版权与许可
 
-本项目的代码、文档和可复用模板采用 [Apache-2.0](LICENSE) 发布，版权方为 prototech（组织名），endless（网名）。Apache-2.0 不代表它自动覆盖第三方工具、字体、模型、图片生成服务或媒体素材。
+本项目的代码、文档和可复用模板采用 [Apache-2.0](LICENSE) 发布，版权方为 prototech（组织名），endless（网名）。随仓库分发的得意黑字体遵循其上游 SIL OFL 1.1 许可，见 [字体许可证](templates/shared-video-template/body/fonts/LICENSE.txt)。Apache-2.0 不代表它自动覆盖第三方工具、模型、图片生成服务或媒体素材。
 
 参考文案整理自第三方口播，不属于 Apache-2.0 授权范围；公开再分发前请确认相应权利。仓库仅保留文案与分析，不包含原视频。
 

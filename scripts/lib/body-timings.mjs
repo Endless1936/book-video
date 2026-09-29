@@ -218,6 +218,7 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
   const result = {
     ok: false,
     contentValid: false,
+    sequenceMappable: false,
     textAvailable: recognized.length > 0,
     timestampsAvailable: flattened.hasTokenTimestamps && recognized.every((item) => Number.isFinite(item.start) && Number.isFinite(item.end)),
     usedSegmentFallback: flattened.usedSegmentFallback,
@@ -528,7 +529,14 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     "non_monotonic_token_offsets",
     "whisper_offsets_out_of_audio_range",
   ]);
+  const reviewableTextIssueCodes = new Set([
+    "script_title_mismatch",
+    "script_row_text_mismatch",
+    "script_text_mismatch",
+  ]);
   result.contentValid = result.diagnostics.issues.every((issue) => timestampIssueCodes.has(issue.code));
+  result.sequenceMappable = result.diagnostics.issues.every((issue) =>
+    timestampIssueCodes.has(issue.code) || reviewableTextIssueCodes.has(issue.code));
   result.ok = result.diagnostics.issues.length === 0;
   if (result.timestampsAvailable && totalMatched > 0) {
     result.captions = rows.map((row, rowIndex) => {

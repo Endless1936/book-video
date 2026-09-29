@@ -138,6 +138,10 @@ function createIntro(brief) {
     path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "SmileySans-Oblique.ttf"),
     path.join(introDir, "fonts", "SmileySans-Oblique.ttf"),
   );
+  copyFile(
+    path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "LICENSE.txt"),
+    path.join(introDir, "fonts", "LICENSE.txt"),
+  );
   copyFile(path.join(imagesDir, "result-bridge.png"), path.join(introDir, "media", "pages", "result.png"));
 }
 
@@ -188,6 +192,10 @@ function createBody(brief, rows, audioTimings) {
   copyFile(
     path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "SmileySans-Oblique.ttf"),
     path.join(bodyDir, "fonts", "SmileySans-Oblique.ttf"),
+  );
+  copyFile(
+    path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "LICENSE.txt"),
+    path.join(bodyDir, "fonts", "LICENSE.txt"),
   );
 
   // The book title (order 1) is already shown as the big top title card;

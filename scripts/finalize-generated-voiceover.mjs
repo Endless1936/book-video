@@ -167,7 +167,12 @@ const scriptAlignment = alignScriptToWhisper(rows, asr, {
   episodeTitle: displayTitle,
   audioDuration: rawVoiceover.duration,
 });
-if (!scriptAlignment.ok) {
+if (
+  !scriptAlignment.sequenceMappable
+  || !scriptAlignment.timestampsAvailable
+  || scriptAlignment.captions.length !== rows.length
+  || !scriptAlignment.captions.every((caption) => Number.isFinite(caption.start) && Number.isFinite(caption.end))
+) {
   const differences = scriptAlignment.diagnostics.issues.map((issue) => issue.message);
   throw new WorkflowError(
     `Generated voiceover alignment blocked: ${differences.join(" ") || "Whisper could not map the approved script to token timestamps."}`,
@@ -185,9 +190,12 @@ if (!scriptAlignment.ok) {
   );
 }
 
-if (scriptAlignment.diagnostics.requiresAgentReview) {
-  console.warn("Whisper accepted the generated voiceover within ASR typo tolerance; review per-row recognizedText and coverage:");
-  console.warn(JSON.stringify(scriptAlignment.diagnostics.rows.filter((row) => !row.exact), null, 2));
+if (scriptAlignment.diagnostics.requiresAgentReview || !scriptAlignment.contentValid) {
+  console.warn("Whisper text differs from the approved script; review the audio and keep script.csv as subtitle truth:");
+  console.warn(JSON.stringify({
+    issues: scriptAlignment.diagnostics.issues,
+    rows: scriptAlignment.diagnostics.rows.filter((row) => !row.exact),
+  }, null, 2));
 }
 
 if (!isFileFingerprintCurrent(scriptPath, approval.scriptFingerprint)) {
