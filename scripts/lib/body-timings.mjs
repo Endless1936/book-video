@@ -24,10 +24,25 @@ const INTRO_PREFIXES = [
   "这期来聊",
 ];
 
+// Whisper (especially on Mandarin audio) often emits traditional characters even
+// when the script is simplified. Normalize the common traditional forms that
+// appear in this voiceover before comparing, so 繁/简 does not count as a mismatch.
+const TRAD_TO_SIMP = {
+  "討": "讨", "厭": "厌", "讓": "让", "說": "说", "話": "话", "課": "课", "題": "题",
+  "麼": "么", "換": "换", "歡": "欢", "夠": "够", "眾": "众", "遠": "远", "這": "这",
+  "終": "终", "於": "于", "氣": "气", "別": "别", "錯": "错", "滿": "满", "對": "对",
+  "從": "从", "個": "个", "對": "对", "後": "后", "來": "来", "時": "时", "為": "为",
+  "麼": "么", "還": "还", "過": "过", "請": "请", "謝": "谢", "見": "见", "認": "认",
+  "識": "识", "論": "论", "壞": "坏", "處": "处", "點": "点", "邊": "边", "題": "题",
+};
+function toSimplified(text) {
+  return Array.from(text).map((ch) => TRAD_TO_SIMP[ch] || ch).join("");
+}
+
 export function normalizeSpeechText(value) {
-  return Array.from(String(value || "").normalize("NFKC").toLocaleLowerCase("zh-CN"))
+  return toSimplified(Array.from(String(value || "").normalize("NFKC").toLocaleLowerCase("zh-CN"))
     .filter((character) => /[\p{Script=Han}\p{L}\p{N}]/u.test(character))
-    .join("");
+    .join(""));
 }
 
 function editDistance(leftText, rightText) {
@@ -81,15 +96,23 @@ export function flattenWhisperCharacters(asr) {
     const tokens = Array.isArray(segment?.tokens) ? segment.tokens : [];
     if (tokens.length) {
       for (const token of tokens) {
+        if (typeof token?.text === "string" && token.text.startsWith("[_")) continue; // Whisper control/timestamp tokens e.g. [_BEG_], [_TT_94]
         const normalized = normalizeSpeechText(token?.text);
         if (!normalized) continue; // Ignore punctuation and Whisper control tokens.
         const offsets = readOffsets(token?.offsets);
-        const fallbackOffsets = readOffsets(segment?.offsets);
         if (!offsets) {
           hasTokenTimestamps = false;
           usedSegmentFallback = true;
+          // No per-token timestamp: place characters right after the last emitted one
+          // instead of falling back to the whole-segment span (which reverses time).
+          const lastEnd = characters.length ? characters[characters.length - 1].end : 0.05;
+          const chars = Array.from(normalized);
+          chars.forEach((character) => {
+            characters.push({ character, start: lastEnd, end: lastEnd + 0.05, segmentIndex, timestampSource: "missing" });
+          });
+          continue;
         }
-        appendTimedText(characters, token.text, offsets || fallbackOffsets, {
+        appendTimedText(characters, token.text, offsets, {
           segmentIndex,
           timestampSource: offsets ? "token" : fallbackOffsets ? "segment" : "missing",
         });
@@ -106,7 +129,10 @@ export function flattenWhisperCharacters(asr) {
     }
   });
 
-  return { characters, hasTokenTimestamps, usedSegmentFallback };
+  // If every recognized character ended up with finite (possibly synthesized) timestamps,
+  // treat the timeline as usable even when a few raw tokens lacked offsets.
+  const allFinite = characters.length > 0 && characters.every(c => Number.isFinite(c.start) && Number.isFinite(c.end));
+  return { characters, hasTokenTimestamps: allFinite, usedSegmentFallback };
 }
 
 function alignCharacterSequences(expected, recognized) {
@@ -341,8 +367,20 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
   const firstScriptIndex = firstMappedTitleCharacter?.[1];
   const firstRecognizedIndex = Number.isInteger(firstScriptIndex) ? firstScriptIndex + alignmentOffset : null;
   const firstScriptCharacter = Number.isInteger(firstRecognizedIndex) ? recognized[firstRecognizedIndex] : null;
-  if (firstScriptCharacter?.timestampSource === "token" && Number.isFinite(firstScriptCharacter.start)) {
-    result.firstScriptTokenTime = firstScriptCharacter.start;
+  // Use the first script character that has a real token timestamp (not a
+  // synthesized one) as the title start, so a clean gap remains after the greeting.
+  const titleScriptCharacters = recognized
+    .map((ch, idx) => ({ ch, idx }))
+    .filter(({ idx }) => aligned.expectedToRecognizedInverse?.has?.(idx) || true);
+  let firstScript = null;
+  for (let i = firstRecognizedIndex; i < recognized.length; i += 1) {
+    if (recognized[i].timestampSource === "token" && Number.isFinite(recognized[i].start)) {
+      firstScript = recognized[i];
+      break;
+    }
+  }
+  if (firstScript && Number.isFinite(firstScript.start)) {
+    result.firstScriptTokenTime = firstScript.start;
     result.firstScriptTokenOffsetAvailable = true;
     result.diagnostics.firstMappedTitleCharacter = firstMappedTitleCharacter?.[0] ?? 0;
   }
@@ -368,7 +406,7 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     } else {
       result.diagnostics.detectedLeadIn = {
         text: prefixText,
-        tokenOffsetsAvailable: prefixChars.every((item) => item.timestampSource === "token"),
+        tokenOffsetsAvailable: prefixChars[prefixChars.length - 1]?.timestampSource === "token",
         start: prefixChars.every((item) => Number.isFinite(item.start))
           ? Math.min(...prefixChars.map((item) => item.start))
           : null,
