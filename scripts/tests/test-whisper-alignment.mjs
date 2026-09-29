@@ -175,6 +175,46 @@ assert.ok(rowAnchorsWithMissingEdgeTokens.diagnostics.issues.some((issue) => iss
 assert.ok(!rowAnchorsWithMissingEdgeTokens.diagnostics.issues.some((issue) => issue.code === "invalid_token_offsets"));
 assert.ok(!rowAnchorsWithMissingEdgeTokens.diagnostics.issues.some((issue) => issue.code === "whisper_offsets_out_of_audio_range"));
 assert.ok(!rowAnchorsWithMissingEdgeTokens.diagnostics.issues.some((issue) => issue.code === "non_monotonic_token_offsets"));
+assert.equal(rowAnchorsWithMissingEdgeTokens.timelineEstimated, true, "incomplete token times retain the legacy estimated-timeline signal");
+
+const zeroWidthTokenOffsets = alignScriptToWhisper(titleRows, asr([
+  { text: "被讨厌的勇气", offsets: { from: 800, to: 1400 }, tokens: [
+    token("被", 800, 800),
+    token("讨厌", 900, 1000),
+    token("的", 1000, 1100),
+    token("勇气", 1100, 1400),
+  ] },
+  { text: "你有没有失去过一个重要的人", offsets: { from: 1500, to: 2800 }, tokens: [
+    token("你有没有", 1500, 1750),
+    token("失去过", 1750, 2050),
+    token("一个重要", 2050, 2500),
+    token("的人", 2500, 2800),
+  ] },
+]), { audioDuration: 4 });
+assert.equal(zeroWidthTokenOffsets.timestampsAvailable, true, "zero-width offsets do not discard other real row anchors");
+assert.equal(zeroWidthTokenOffsets.captions.length, titleRows.length);
+assert.equal(zeroWidthTokenOffsets.diagnostics.contentValid, true);
+assert.equal(zeroWidthTokenOffsets.diagnostics.requiresAgentReview, true);
+assert.equal(zeroWidthTokenOffsets.timelineEstimated, true);
+assert.ok(zeroWidthTokenOffsets.diagnostics.issues.some((issue) => issue.code === "zero_width_token_offsets"));
+assert.ok(!zeroWidthTokenOffsets.diagnostics.issues.some((issue) => issue.code === "invalid_token_offsets"));
+
+const malformedTokenOffsets = alignScriptToWhisper(titleRows, asr([
+  { text: "被讨厌的勇气", offsets: { from: 800, to: 1400 }, tokens: [
+    { text: "被", offsets: { from: "bad", to: 900 } },
+    token("讨厌", 900, 1000),
+    token("的", 1000, 1100),
+    token("勇气", 1100, 1400),
+  ] },
+  { text: "你有没有失去过一个重要的人", offsets: { from: 1500, to: 2800 }, tokens: [
+    token("你有没有", 1500, 1750),
+    token("失去过", 1750, 2050),
+    token("一个重要", 2050, 2500),
+    token("的人", 2500, 2800),
+  ] },
+]), { audioDuration: 4 });
+assert.ok(malformedTokenOffsets.diagnostics.issues.some((issue) => issue.code === "invalid_token_offsets"));
+assert.ok(!malformedTokenOffsets.diagnostics.issues.some((issue) => issue.code === "zero_width_token_offsets"));
 
 const firstTitleCharacterTypo = alignScriptToWhisper(titleRows, asr([
   { text: "今天分享的是", offsets: { from: 0, to: 500 }, tokens: [token("今天分享的是", 0, 500)] },
