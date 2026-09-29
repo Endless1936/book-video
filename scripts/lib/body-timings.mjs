@@ -86,6 +86,55 @@ function appendTimedText(target, value, offsets, metadata = {}) {
   });
 }
 
+// Whisper.cpp often omits per-token offsets for single-character tokens
+// (e.g. 别, 而, 怕, 所, 以). Leaving those characters with null timestamps
+// makes caption generation impossible and forces a coarse duration fallback.
+// Interpolate them from adjacent real anchors WITHIN THE SAME segment only —
+// never across segments and never inventing times without any anchor.
+// Interpolated characters keep the "interpolated" source so callers can tell
+// real token times from estimates.
+function interpolateMissingTimestamps(characters) {
+  const indexesBySegment = new Map();
+  characters.forEach((character, index) => {
+    if (!indexesBySegment.has(character.segmentIndex)) indexesBySegment.set(character.segmentIndex, []);
+    indexesBySegment.get(character.segmentIndex).push(index);
+  });
+  for (const indexes of indexesBySegment.values()) {
+    const timed = indexes.filter((i) => Number.isFinite(characters[i].start) && Number.isFinite(characters[i].end));
+    if (!timed.length) continue; // No anchor in this segment: stay missing, do not invent.
+    for (const index of indexes) {
+      const character = characters[index];
+      if (Number.isFinite(character.start)) continue;
+      let prevIndex = -1;
+      let nextIndex = -1;
+      for (const timedIndex of timed) {
+        if (timedIndex < index) prevIndex = timedIndex;
+        if (timedIndex > index) { nextIndex = timedIndex; break; }
+      }
+      const prev = prevIndex >= 0 ? characters[prevIndex] : null;
+      const next = nextIndex >= 0 ? characters[nextIndex] : null;
+      if (prev && next) {
+        const span = nextIndex - prevIndex;
+        const ratio = (index - prevIndex) / span;
+        character.start = prev.end + (next.start - prev.end) * ratio;
+        character.end = prev.end + (next.end - prev.end) * ratio;
+      } else if (prev) {
+        const step = Math.max(0.05, prev.end - prev.start);
+        character.start = prev.end;
+        character.end = prev.end + step;
+      } else if (next) {
+        const step = Math.max(0.05, next.end - next.start);
+        character.end = next.start;
+        character.start = Math.max(0, next.start - step);
+      }
+      if (Number.isFinite(character.start) && Number.isFinite(character.end)) {
+        character.timestampSource = "interpolated";
+      }
+    }
+  }
+  return characters;
+}
+
 export function flattenWhisperCharacters(asr) {
   const characters = [];
   let hasTokenTimestamps = true;
@@ -126,8 +175,14 @@ export function flattenWhisperCharacters(asr) {
 
   // Keep real token timestamps distinct from missing values. Caption timing can
   // fall back downstream; generated greeting splits need their own real anchors.
-  const allFinite = characters.length > 0 && characters.every(c => Number.isFinite(c.start) && Number.isFinite(c.end));
-  return { characters, hasTokenTimestamps, usedSegmentFallback, timelineEstimated: allFinite && !hasTokenTimestamps };
+  const interpolated = interpolateMissingTimestamps(characters);
+  const allFiniteAfterInterpolation = interpolated.length > 0 && interpolated.every(c => Number.isFinite(c.start) && Number.isFinite(c.end));
+  return {
+    characters: interpolated,
+    hasTokenTimestamps,
+    usedSegmentFallback,
+    timelineEstimated: allFiniteAfterInterpolation && !hasTokenTimestamps,
+  };
 }
 
 function alignCharacterSequences(expected, recognized) {
@@ -278,6 +333,26 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     });
   }
 
+  // Whisper sometimes reports an end a fraction of a second past the audio
+  // duration (e.g. 26.20s on a 26.04s file). Clamp mild overshoot (<=1s) back
+  // into range instead of failing the whole timeline; severe overshoot still
+  // fails below.
+  const rawOutOfRangeCharacters = finiteAudioDuration === null ? [] : recognized.filter((item) =>
+    Number.isFinite(item.start) && Number.isFinite(item.end)
+    && (item.start < 0 || item.start >= finiteAudioDuration || item.end <= 0 || item.end > finiteAudioDuration + 0.1));
+  if (finiteAudioDuration !== null) {
+    for (const item of recognized) {
+      if (!Number.isFinite(item.start) || !Number.isFinite(item.end)) continue;
+      if (item.end > finiteAudioDuration && item.end <= finiteAudioDuration + 1) {
+        item.end = finiteAudioDuration;
+      }
+      if (item.start >= finiteAudioDuration && item.start <= finiteAudioDuration + 1) {
+        item.start = Math.max(0, finiteAudioDuration - 0.05);
+      }
+      if (item.end <= 0 && item.end >= -1) item.end = 0.05;
+    }
+  }
+
   const outOfRangeCharacters = finiteAudioDuration === null ? [] : recognized.filter((item) =>
     !Number.isFinite(item.start)
     || !Number.isFinite(item.end)
@@ -296,6 +371,13 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
         start: outOfRangeCharacters[0].start,
         end: outOfRangeCharacters[0].end,
       },
+    });
+  } else if (rawOutOfRangeCharacters.length) {
+    // Mild overshoot was clamped; record it as a review note, not a hard failure.
+    result.diagnostics.issues.push({
+      code: "whisper_offsets_clamped",
+      message: `${rawOutOfRangeCharacters.length} Whisper character timestamp(s) were clamped to the ${finiteAudioDuration.toFixed(2)}s audio duration (mild overshoot).`,
+      count: rawOutOfRangeCharacters.length,
     });
   }
 
@@ -561,6 +643,7 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     "invalid_token_offsets",
     "non_monotonic_token_offsets",
     "whisper_offsets_out_of_audio_range",
+    "whisper_offsets_clamped",
   ]);
   const reviewableTextIssueCodes = new Set([
     "script_title_mismatch",

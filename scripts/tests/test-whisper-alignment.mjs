@@ -323,9 +323,20 @@ assert.equal(nearAudioEnd.ok, true, "a small Whisper end overshoot is tolerated"
 assert.ok(nearAudioEnd.captions.every((caption) => caption.start >= 0 && caption.end <= 4));
 assert.equal(nearAudioEnd.captions.at(-1).end, 4);
 
-const beyondAudioEnd = alignScriptToWhisper(rows, asr([
+const mildOvershootClamped = alignScriptToWhisper(rows, asr([
   { text: "你有没有失去过一个重要的人后来才发现那时就是最好的时候", offsets: { from: 0, to: 4200 }, tokens: [
     token("你有没有失去过一个重要的人后来才发现那时就是最好的时候", 0, 4200),
+  ] },
+]), { audioDuration: 4 });
+assert.equal(mildOvershootClamped.timestampsAvailable, true, "mild end overshoot (<=1s) is clamped, not fatal");
+assert.equal(mildOvershootClamped.ok, false, "clamped overshoot still flags a review note");
+assert.ok(mildOvershootClamped.captions.every((caption) => caption.start >= 0 && caption.end <= 4));
+assert.equal(mildOvershootClamped.captions.at(-1).end, 4);
+assert.ok(mildOvershootClamped.diagnostics.issues.some((issue) => issue.code === "whisper_offsets_clamped"));
+
+const beyondAudioEnd = alignScriptToWhisper(rows, asr([
+  { text: "你有没有失去过一个重要的人后来才发现那时就是最好的时候", offsets: { from: 0, to: 8000 }, tokens: [
+    token("你有没有失去过一个重要的人后来才发现那时就是最好的时候", 0, 8000),
   ] },
 ]), { audioDuration: 4 });
 assert.equal(beyondAudioEnd.timestampsAvailable, false);
