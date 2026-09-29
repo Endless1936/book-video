@@ -123,6 +123,45 @@ if (rawAudioStream?.codec_name !== "mp3") {
     code: "generated_voiceover_not_mp3",
   });
 }
+// Guard against using a whisper-downgraded copy as the master. whisper-cli reads
+// this file directly and resamples internally, so the raw file should always be
+// the high-fidelity TTS output — not a 16kHz mono mp3 produced for whisper.
+const rawSampleRate = Number(rawAudioStream?.sample_rate || 0);
+const rawBitRate = Number(rawVoiceover.probe.format?.bit_rate || 0);
+if (rawSampleRate && rawSampleRate < 32000) {
+  throw new WorkflowError(
+    `Generated raw voiceover sample rate is ${rawSampleRate} Hz, below 32 kHz. ` +
+    `This looks like a whisper-downgraded copy, not the high-fidelity TTS master. ` +
+    `whisper-cli resamples internally; keep the original high-fidelity audio as raw.`,
+    { code: "generated_voiceover_low_sample_rate" },
+  );
+}
+if (rawBitRate && rawBitRate < 160000) {
+  throw new WorkflowError(
+    `Generated raw voiceover bitrate is ${Math.round(rawBitRate / 1000)} kbps, below 160 kbps. ` +
+    `This looks like a whisper-downgraded copy, not the high-fidelity TTS master.`,
+    { code: "generated_voiceover_low_bitrate" },
+  );
+}
+// Guard against long leading silence, which confuses whisper's greeting detection
+// (the cloned "今天分享的是" prefix can get placed at t=0 while real speech starts
+// several seconds in).
+const leadingSilenceDetect = spawnSync("ffmpeg", [
+  "-hide_banner", "-i", rawPath,
+  "-af", "silencedetect=noise=-35dB:d=2",
+  "-f", "null", "-",
+], { encoding: "utf8" });
+const silenceLog = `${leadingSilenceDetect.stderr || ""}`;
+const leadingMatch = silenceLog.match(/silence_start: ([\d.]+)/);
+if (leadingMatch && Number(leadingMatch[1]) > 3) {
+  const leadSec = Number(leadingMatch[1]).toFixed(1);
+  throw new WorkflowError(
+    `Generated raw voiceover has ${leadSec}s of leading silence. ` +
+    `Trim it (e.g. ffmpeg -af "atrim=${Number(leadingMatch[1]).toFixed(2)},asetpts=PTS-STARTPTS") ` +
+    `so whisper can place the greeting correctly.`,
+    { code: "generated_voiceover_long_leading_silence" },
+  );
+}
 if (!fs.existsSync(modelPath) || fs.statSync(modelPath).size < 100 * 1024 * 1024) {
   throw new WorkflowError(`A valid local Whisper model is required for the generated-voice alignment gate: ${modelPath}`, {
     code: "whisper_model_unavailable",
