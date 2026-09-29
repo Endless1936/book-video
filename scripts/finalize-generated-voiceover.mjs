@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 // Voiceover finalization.
-// - TTS source (default): Whisper checks ONLY that the spoken content matches
-//   script.csv — duplication or garbling blocks, everything else warns.
-// - Jianying source (--source jianying): Whisper is skipped entirely.
-// Timing is produced later by create-body-timings.mjs from silence boundaries.
+// - TTS includes the cloned opener, title, and body in one pass. Whisper checks
+//   text only; FFmpeg silence boundaries split the opener from the script.
+// - Jianying input is read from body-voiceover.mp3 and skips Whisper entirely.
+// Caption timing is produced later from FFmpeg silence boundaries.
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -13,7 +13,7 @@ import { readCsv } from "./lib/csv.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
 import { fingerprintFile, isFileFingerprintCurrent, validateVoiceoverArtifact } from "./lib/media-validation.mjs";
-import { checkScriptContent } from "./lib/body-timings.mjs";
+import { buildSpeechSegments, checkScriptContent, parseSilenceEvents } from "./lib/body-timings.mjs";
 import { completeWorkflowStep } from "./lib/workflow-state.mjs";
 import { findLeadingSilence, replaceArtifactsTransactionally } from "./lib/generated-voiceover.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
@@ -27,6 +27,9 @@ const scriptPath = episodeDir ? path.join(episodeDir, "script.csv") : "";
 const approvalPath = episodeDir ? path.join(episodeDir, "script-approval.json") : "";
 const rawPath = audioDir ? path.join(audioDir, "body-voiceover.raw.mp3") : "";
 const finalPath = audioDir ? path.join(audioDir, "body-voiceover.mp3") : "";
+const generatedIntroPath = audioDir ? path.join(audioDir, "intro-voiceover.generated.wav") : "";
+const generatedIntroManifestPath = audioDir ? path.join(audioDir, "intro-voiceover.generated.json") : "";
+const standardIntroPath = path.join(ROOT, "assets", "template-audio", "intro-voiceover.mp3");
 const modelPath = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
 const referenceVoicePath = path.join(ROOT, "assets", "template-audio", "audio-ref.mp3");
 const asrDir = audioDir ? path.join(audioDir, "asr") : "";
@@ -43,6 +46,7 @@ if (!["tts", "jianying"].includes(voiceSource)) {
     code: "invalid_arguments",
   });
 }
+const voiceoverInputPath = voiceSource === "tts" ? rawPath : finalPath;
 
 installWorkflowDiagnostics({
   root: ROOT,
@@ -50,9 +54,8 @@ installWorkflowDiagnostics({
   stage: "generated_voiceover_content_gate",
   episodeDir,
   nextActions: [
-    "Do not run create-body-timings.mjs or render the episode until this gate passes.",
-    "Keep the generated raw audio and existing canonical voiceover unchanged.",
-    "Show the per-row Whisper/script differences, then ask whether to regenerate the audio or use a Jianying export.",
+    "Keep the source audio and current canonical voiceover unchanged if a confirmed TTS content mismatch is reported.",
+    "Review the listed script differences; regenerate TTS or use the Jianying source when appropriate.",
   ],
 });
 
@@ -124,19 +127,26 @@ if (voiceSource === "tts" && !fs.existsSync(referenceVoicePath)) {
     nextActions: ["Keep the canonical voiceover unchanged and use the manual Jianying export path (--source jianying)."],
   });
 }
-if (!fs.existsSync(rawPath)) throw new Error(`Generated raw voiceover not found: ${rawPath}`);
-const rawVoiceover = validateVoiceoverArtifact(rawPath);
-const rawAudioStream = rawVoiceover.probe.streams?.find((stream) => stream.codec_type === "audio");
-if (rawAudioStream?.codec_name !== "mp3") {
-  throw new WorkflowError(`Generated raw voiceover must be MP3, found ${rawAudioStream?.codec_name || "unknown audio codec"}.`, {
-    code: "generated_voiceover_not_mp3",
+if (!fs.existsSync(voiceoverInputPath)) {
+  throw new WorkflowError(`Voiceover file not found: ${voiceoverInputPath}`, {
+    code: voiceSource === "tts" ? "generated_voiceover_missing" : "jianying_voiceover_missing",
+    nextActions: [voiceSource === "tts"
+      ? "Save the one-pass cloned opener, title, and body to body-voiceover.raw.mp3."
+      : "Export the approved title and body from Jianying to body-voiceover.mp3."],
+  });
+}
+const sourceVoiceover = validateVoiceoverArtifact(voiceoverInputPath);
+const sourceAudioStream = sourceVoiceover.probe.streams?.find((stream) => stream.codec_type === "audio");
+if (sourceAudioStream?.codec_name !== "mp3") {
+  throw new WorkflowError(`Voiceover must be MP3, found ${sourceAudioStream?.codec_name || "unknown audio codec"}.`, {
+    code: "voiceover_not_mp3",
   });
 }
 // Warn (don't hard-reject) on suspicious sample-rate/bitrate or long leading
 // silence: TTS providers are not committed to specific values, and Whisper is
 // no longer the timing source, so these never gate.
-const rawSampleRate = Number(rawAudioStream?.sample_rate || 0);
-const rawBitRate = Number(rawVoiceover.probe.format?.bit_rate || 0);
+const rawSampleRate = Number(sourceAudioStream?.sample_rate || 0);
+const rawBitRate = Number(sourceVoiceover.probe.format?.bit_rate || 0);
 if (rawSampleRate && rawSampleRate < 32000) {
   console.warn(
     `[voiceover] WARNING: raw voiceover sample rate is ${rawSampleRate} Hz (< 32 kHz). ` +
@@ -151,87 +161,103 @@ if (rawBitRate && rawBitRate < 160000) {
   );
 }
 const leadingSilenceDetect = spawnSync("ffmpeg", [
-  "-hide_banner", "-i", rawPath,
+  "-hide_banner", "-i", voiceoverInputPath,
   "-af", "silencedetect=noise=-35dB:d=2",
   "-f", "null", "-",
 ], { encoding: "utf8" });
-const leadingSilence = findLeadingSilence(`${leadingSilenceDetect.stderr || ""}`, rawVoiceover.duration);
+const leadingSilence = findLeadingSilence(`${leadingSilenceDetect.stderr || ""}`, sourceVoiceover.duration);
 if (leadingSilence && leadingSilence.start < 0.5 && leadingSilence.end - leadingSilence.start > 3) {
   console.warn(
-    `[voiceover] WARNING: raw voiceover has ${leadingSilence.end.toFixed(1)}s of leading silence. ` +
+    `[voiceover] WARNING: voiceover has ${leadingSilence.end.toFixed(1)}s of leading silence. ` +
     `Silence-boundary timing tolerates it, but the rendered intro may feel empty. Trim it ` +
     `(e.g. ffmpeg -af "atrim=start=${leadingSilence.end.toFixed(2)},asetpts=PTS-STARTPTS") if it is audible.`,
   );
 }
 
-let contentCheck = { textAvailable: false, contentValid: true, diagnostics: { issues: [], rows: [] } };
+let contentCheck = {
+  textAvailable: false,
+  contentValid: true,
+  diagnostics: {
+    issues: [],
+    rows: [],
+    contentCheck: voiceSource === "tts" ? "unavailable" : "skipped_jianying",
+    requiresAgentReview: voiceSource === "tts",
+  },
+};
+function noteWhisperUnavailable(reason) {
+  contentCheck = {
+    textAvailable: false,
+    contentValid: true,
+    diagnostics: {
+      issues: [],
+      rows: [],
+      contentCheck: "unavailable",
+      contentCheckReason: reason,
+      requiresAgentReview: true,
+    },
+  };
+  console.warn(`Whisper content check unavailable: ${reason}. Continuing with Agent review; no timing depends on Whisper.`);
+}
+
 if (voiceSource === "tts") {
   if (!fs.existsSync(modelPath) || fs.statSync(modelPath).size < 100 * 1024 * 1024) {
-    throw new WorkflowError(`A valid local Whisper model is required to check TTS content: ${modelPath}`, {
-      code: "whisper_model_unavailable",
-      nextActions: [
-        "Keep the generated raw audio and existing canonical voiceover unchanged.",
-        "Ask the user whether to provide a Jianying export (--source jianying) or install the local Whisper model before continuing.",
-      ],
-    });
-  }
-  fs.mkdirSync(asrDir, { recursive: true });
-  fs.rmSync(`${asrBase}.json`, { force: true });
-  fs.rmSync(`${asrBase}.txt`, { force: true });
-  const whisper = spawnSync("whisper-cli", [
-    "-ng",
-    "-m", modelPath,
-    "-l", "zh",
-    "-ojf",
-    "-otxt",
-    "--prompt", displayTitle,
-    "-of", asrBase,
-    rawPath,
-  ], { cwd: ROOT, encoding: "utf8", shell: false });
-  if (whisper.status !== 0) {
-    const detail = whisper.error?.message || whisper.stderr?.trim() || whisper.stdout?.trim() || `status=${whisper.status}`;
-    throw new WorkflowError(`Whisper could not verify generated speech: ${detail.slice(-1800)}`, {
-      code: "whisper_verification_failed",
-      nextActions: [
-        "Keep the generated raw audio and existing canonical voiceover unchanged.",
-        "Ask the user whether to provide a Jianying export (--source jianying) or repair Whisper before continuing.",
-      ],
-    });
-  }
-  const asrJsonPath = `${asrBase}.json`;
-  if (!fs.existsSync(asrJsonPath)) {
-    throw new WorkflowError(`Whisper did not create its JSON output: ${asrJsonPath}`, {
-      code: "whisper_output_missing",
-    });
-  }
-  const asr = JSON.parse(fs.readFileSync(asrJsonPath, "utf8"));
-  contentCheck = checkScriptContent(rows, asr, { episodeTitle: displayTitle });
-  if (!contentCheck.contentValid) {
-    const differences = (contentCheck.diagnostics.blockingIssues || contentCheck.diagnostics.issues)
-      .map((issue) => issue.message);
-    throw new WorkflowError(
-      `Generated voiceover content check failed (duplicated or garbled speech): ${differences.join(" ")}`,
-      {
-        code: "generated_voiceover_content_check_failed",
-        details: {
-          scriptVersion: version,
-          scriptRows: rows.length,
-          contentCheck: contentCheck.diagnostics,
-          rawDurationSeconds: Number(rawVoiceover.duration.toFixed(2)),
-          rawVoiceover: path.relative(ROOT, rawPath),
-        },
-      },
-    );
-  }
-  if (contentCheck.diagnostics.requiresAgentReview) {
-    console.warn("Whisper content differs slightly from the approved script; script.csv remains the subtitle truth:");
-    console.warn(JSON.stringify({
-      issues: contentCheck.diagnostics.issues,
-      rows: contentCheck.diagnostics.rows.filter((row) => !row.exact),
-    }, null, 2));
+    noteWhisperUnavailable("local model missing or invalid");
+  } else {
+    fs.mkdirSync(asrDir, { recursive: true });
+    fs.rmSync(`${asrBase}.json`, { force: true });
+    fs.rmSync(`${asrBase}.txt`, { force: true });
+    const whisper = spawnSync("whisper-cli", [
+      "-ng",
+      "-m", modelPath,
+      "-l", "zh",
+      "-ojf",
+      "-otxt",
+      "--prompt", displayTitle,
+      "-of", asrBase,
+      rawPath,
+    ], { cwd: ROOT, encoding: "utf8", shell: false });
+    if (whisper.status !== 0) {
+      const detail = whisper.error?.message || whisper.stderr?.trim() || whisper.stdout?.trim() || `status=${whisper.status}`;
+      noteWhisperUnavailable(detail.slice(-1800));
+    } else if (!fs.existsSync(`${asrBase}.json`)) {
+      noteWhisperUnavailable("Whisper produced no JSON transcript");
+    } else {
+      try {
+        const asr = JSON.parse(fs.readFileSync(`${asrBase}.json`, "utf8"));
+        contentCheck = checkScriptContent(rows, asr, { episodeTitle: displayTitle });
+        if (!contentCheck.textAvailable) {
+          noteWhisperUnavailable(contentCheck.diagnostics.contentCheckReason || "Whisper returned no readable speech text");
+        } else if (!contentCheck.contentValid) {
+          const differences = (contentCheck.diagnostics.blockingIssues || contentCheck.diagnostics.issues)
+            .map((issue) => issue.message);
+          throw new WorkflowError(
+            `Generated voiceover content check found a script mismatch or duplicated/garbled speech: ${differences.join(" ")}`,
+            {
+              code: "generated_voiceover_content_check_failed",
+              details: {
+                scriptVersion: version,
+                scriptRows: rows.length,
+                contentCheck: contentCheck.diagnostics,
+                sourceDurationSeconds: Number(sourceVoiceover.duration.toFixed(2)),
+                sourceVoiceover: path.relative(ROOT, voiceoverInputPath),
+              },
+            },
+          );
+        } else if (contentCheck.diagnostics.requiresAgentReview) {
+          console.warn("Whisper found minor script-text variance; script.csv remains the subtitle truth:");
+          console.warn(JSON.stringify({
+            issues: contentCheck.diagnostics.issues,
+            rows: contentCheck.diagnostics.rows.filter((row) => !row.exact),
+          }, null, 2));
+        }
+      } catch (error) {
+        if (error instanceof WorkflowError) throw error;
+        noteWhisperUnavailable(error.message || "Whisper JSON could not be read");
+      }
+    }
   }
 } else {
-  console.warn(`[voiceover] Jianying source: skipping Whisper content check (${rows.length} rows accepted as-is).`);
+  console.warn(`Jianying source: skipping Whisper content check (${rows.length} rows accepted as-is).`);
 }
 
 if (!isFileFingerprintCurrent(scriptPath, approval.scriptFingerprint)) {
@@ -250,17 +276,75 @@ const runFfmpeg = (args, stage) => {
   }
 };
 
+function makeAtempoFilter(factor) {
+  const filters = [];
+  let remaining = factor;
+  while (remaining > 2) {
+    filters.push("atempo=2");
+    remaining /= 2;
+  }
+  if (remaining > 1.001) filters.push(`atempo=${remaining.toFixed(6)}`);
+  return filters;
+}
+
+let generatedIntroSplit = null;
+let standardIntroDuration = 0;
+if (voiceSource === "tts") {
+  const boundaryDetection = spawnSync("ffmpeg", [
+    "-hide_banner", "-i", rawPath,
+    "-af", "silencedetect=noise=-35dB:d=0.25",
+    "-f", "null", "-",
+  ], { encoding: "utf8", shell: false });
+  if (boundaryDetection.status === 0) {
+    const speechSegments = buildSpeechSegments(
+      sourceVoiceover.duration,
+      parseSilenceEvents(`${boundaryDetection.stdout || ""}\n${boundaryDetection.stderr || ""}`),
+    );
+    const greetingWasRecognized = Boolean(contentCheck.diagnostics.detectedLeadIn);
+    if (speechSegments.length >= 2 && (!contentCheck.textAvailable || greetingWasRecognized)) {
+      generatedIntroSplit = {
+        greeting: speechSegments[0],
+        bodyStart: speechSegments[1].start,
+      };
+      standardIntroDuration = validateVoiceoverArtifact(standardIntroPath).duration;
+    }
+  }
+  if (!generatedIntroSplit) {
+    console.warn(
+      "[voiceover] Could not confidently separate a cloned greeting using silence boundaries. " +
+      "Keeping the TTS audio intact and using the shared intro; review for a repeated opener.",
+    );
+    contentCheck.diagnostics.requiresAgentReview = true;
+  }
+}
+
+if (!isFileFingerprintCurrent(scriptPath, approval.scriptFingerprint)) {
+  throw new WorkflowError("The approved script changed during voiceover finalization.", {
+    code: "script_approval_stale",
+  });
+}
+
 fs.mkdirSync(audioDir, { recursive: true });
 const suffix = `${process.pid}-${randomUUID()}.candidate`;
 const bodyCandidate = `${finalPath}.${suffix}.mp3`;
 const bodyWaveCandidate = path.join(audioDir, `.body-voiceover.${suffix}.wav`);
+const introCandidate = `${generatedIntroPath}.${suffix}.wav`;
+const manifestCandidate = `${generatedIntroManifestPath}.${suffix}.json`;
 
 try {
+  const pcmFormat = "aresample=48000,aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo";
+  const bodySourceStart = generatedIntroSplit?.bodyStart || 0;
+  const bodyFilters = [
+    `atrim=start=${bodySourceStart.toFixed(6)}`,
+    "asetpts=PTS-STARTPTS",
+    pcmFormat,
+  ].join(",");
   runFfmpeg([
-    "-y", "-i", rawPath,
-    "-af", "aresample=48000,aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo",
+    "-y", "-i", voiceoverInputPath,
+    "-af", bodyFilters,
     "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", bodyWaveCandidate,
-  ], "normalizing the voiceover master");
+  ], "preparing the script voiceover");
+
   const processing = spawnSync(process.execPath, [
     path.join(ROOT, "scripts", "process-voiceover.mjs"),
     bodyWaveCandidate,
@@ -279,9 +363,52 @@ try {
     });
   }
 
-  const replacement = replaceArtifactsTransactionally([
+  const filesToReplace = [
     { candidate: bodyCandidate, destination: finalPath, backup: `${finalPath}.${suffix}.previous` },
-  ], {
+  ];
+  if (generatedIntroSplit) {
+    const greetingDuration = generatedIntroSplit.greeting.end - generatedIntroSplit.greeting.start;
+    const maxGreetingSpeechDuration = Math.min(1.03, standardIntroDuration);
+    const tempoFilters = makeAtempoFilter(Math.max(1, greetingDuration / maxGreetingSpeechDuration));
+    const introFilters = [
+      `atrim=start=${generatedIntroSplit.greeting.start.toFixed(6)}:end=${generatedIntroSplit.greeting.end.toFixed(6)}`,
+      "asetpts=PTS-STARTPTS",
+      ...tempoFilters,
+      "apad",
+      `atrim=duration=${standardIntroDuration.toFixed(6)}`,
+      pcmFormat,
+    ].join(",");
+    runFfmpeg([
+      "-y", "-i", rawPath,
+      "-af", introFilters,
+      "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", introCandidate,
+    ], "making the cloned opener match the shared intro duration");
+    const introArtifact = validateVoiceoverArtifact(introCandidate);
+    if (Math.abs(introArtifact.duration - standardIntroDuration) > 1 / 48000) {
+      throw new WorkflowError("The generated opener could not be padded to the shared intro duration.", {
+        code: "generated_intro_duration_mismatch",
+      });
+    }
+
+    const manifest = {
+      voiceSource: "tts",
+      scriptVersion: version,
+      scriptFingerprint: fingerprintFile(scriptPath),
+      bodyVoiceFingerprint: fingerprintFile(bodyCandidate),
+      generatedIntroFingerprint: fingerprintFile(introCandidate),
+      introDurationSeconds: introArtifact.duration,
+      greetingText: contentCheck.diagnostics.detectedLeadIn?.text || "今天分享的是",
+      greetingSpeechEndSeconds: Math.min(greetingDuration, maxGreetingSpeechDuration),
+      titleSpeechStartSeconds: generatedIntroSplit.bodyStart,
+    };
+    fs.writeFileSync(manifestCandidate, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+    filesToReplace.push(
+      { candidate: introCandidate, destination: generatedIntroPath, backup: `${generatedIntroPath}.${suffix}.previous` },
+      { candidate: manifestCandidate, destination: generatedIntroManifestPath, backup: `${generatedIntroManifestPath}.${suffix}.previous` },
+    );
+  }
+
+  const replacement = replaceArtifactsTransactionally(filesToReplace, {
     afterReplace: () => {
       completeWorkflowStep(episodeDir, "voiced", {
         enforceDependencies: true,
@@ -293,13 +420,18 @@ try {
     console.warn(`Could not remove the previous voice artifact; retained recovery backup: ${backup}`);
   }
 } finally {
+  fs.rmSync(introCandidate, { force: true });
   fs.rmSync(bodyCandidate, { force: true });
   fs.rmSync(bodyWaveCandidate, { force: true });
+  fs.rmSync(manifestCandidate, { force: true });
 }
 
 console.log(`Voiceover finalized (${rows.length} approved rows, source: ${voiceSource}).`);
 console.log(`Canonical script voiceover: ${path.relative(ROOT, finalPath)}`);
 if (voiceSource === "tts") {
-  console.log(`Content check: ${contentCheck.diagnostics.contentCheck}`);
+  console.log(`Content check: ${contentCheck.diagnostics.contentCheck || "unavailable"}`);
+  console.log(generatedIntroSplit
+    ? `Cloned intro: ${path.relative(ROOT, generatedIntroPath)} (${standardIntroDuration.toFixed(3)}s).`
+    : "Intro source: shared template (review the TTS opening).");
 }
 console.log("Timing will be generated from silence boundaries by create-body-timings.mjs.");

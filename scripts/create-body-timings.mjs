@@ -144,18 +144,15 @@ try {
   console.warn(`Silence detection unavailable; continuing with full audio duration: ${error.message}`);
 }
 
-// A single extra leading speech segment is a spoken opener (old habit: "今天分享
-// 的是" before the title). The shared intro template now owns that opener, so it
-// is skipped and the remaining segments map 1:1 to script rows.
-let mappedSegments = speechSegments;
-if (speechSegments.length === rows.length + 1) {
-  mappedSegments = speechSegments.slice(1);
-}
+// Do not infer that an extra segment is an opener from its count. Reconcile
+// every count mismatch below by merging nearby boundaries or estimating from
+// the detected speech duration, then flag the result for review.
+const mappedSegments = speechSegments;
 
 let captions;
 let fallbackReason = null;
 let method = "silence-boundary";
-let requiresAgentReview = false;
+let requiresAgentReview = Boolean(silenceFailure);
 try {
   const normalizedSegments = mappedSegments.length === rows.length
     ? mappedSegments
@@ -163,7 +160,7 @@ try {
   captions = buildCaptionTimings(rows.map((row) => row.order), normalizedSegments);
   if (mappedSegments.length !== rows.length) {
     requiresAgentReview = true;
-    fallbackReason = `Found ${speechSegments.length} speech segments for ${rows.length} rows; coalesced or trimmed to row count.`;
+    fallbackReason = `Found ${speechSegments.length} speech segments for ${rows.length} script rows; merged the shortest adjacent gaps to match.`;
     console.warn(`[timing] ${fallbackReason}`);
   }
 } catch (error) {
@@ -196,7 +193,6 @@ const timings = {
   audio: path.relative(ROOT, voicePath),
   audioFingerprint: voiceover.fingerprint,
   scriptFingerprint,
-  skipLeadingSegments: speechSegments.length === rows.length + 1 ? 1 : 0,
   silence: { noise: options.noise, duration: Number(options.silenceDuration) },
   alignment,
   captions,
