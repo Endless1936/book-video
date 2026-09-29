@@ -135,7 +135,11 @@ const scriptValidation = validateBodyScript(rows, { episodeTitle: displayTitle }
 if (scriptValidation.errors.length) throw new Error(scriptValidation.errors.join("；"));
 
 fs.mkdirSync(asrDir, { recursive: true });
-const whisperPrompt = `${episodeName}。${rows.map((row) => row.text).join("。")}`;
+// Only the book title as a hot-word prompt. A long Chinese initial prompt
+// (title + every script row) catastrophically biases whisper.cpp's decoder —
+// verified: it recognized only the final 2 lines of the 19-line voiceover.
+// A short prompt keeps recognition complete and still guides the title spelling.
+const whisperPrompt = episodeName;
 let whisperFailure = null;
 if (fs.existsSync(MODEL_PATH)) {
   try {
