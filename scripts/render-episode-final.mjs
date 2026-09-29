@@ -10,6 +10,7 @@ import { resolvePreviewBodyTimings } from "./lib/preview-body-timings.mjs";
 import { buildProductionReport } from "./lib/production-report.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { INTRO_VIDEO_TRIM_SECONDS } from "./lib/generated-voiceover.mjs";
+import { getAtmosphereImageNames } from "./lib/body-scenes.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 import {
   assertRenderTimingPreflight,
@@ -355,12 +356,11 @@ run("ffmpeg", [
 ]);
 
 const finalProbe = probeMedia(candidateOutputPath);
-const subtitleCount = readCsv(scriptPath).rows.filter((row) => row.version === scriptVersion).length;
+const scriptRows = readCsv(scriptPath).rows.filter((row) => row.version === scriptVersion);
+const subtitleCount = scriptRows.length;
 const requiredImageNames = [
   "result-bridge.png",
-  "atmosphere-1.png",
-  "atmosphere-2.png",
-  "atmosphere-3.png",
+  ...getAtmosphereImageNames(scriptRows.filter((row) => Number(row.order) !== 1).length),
 ];
 const report = buildProductionReport({
   book: episodeName,

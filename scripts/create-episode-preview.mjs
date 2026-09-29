@@ -7,6 +7,7 @@ import { slugifyEpisodeName } from "./lib/episode-slug.mjs";
 import { resolvePreviewBodyTimings } from "./lib/preview-body-timings.mjs";
 import { resolveScriptVersion } from "./lib/script-version.mjs";
 import { validateBodyScript } from "./lib/script-policy.mjs";
+import { getAtmosphereImageNames, segmentCaptionRows } from "./lib/body-scenes.mjs";
 import { assertRenderTimingPreflight } from "./lib/workflow-state.mjs";
 import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagnostics.mjs";
 
@@ -110,36 +111,6 @@ function wrapCaptionText(text, maxClauseChars = 12) {
   return lines.map((line) => esc(line)).join("<br />");
 }
 
-// Split caption rows into visual scenes of 3-5 rows each.
-// Cuts prefer natural pauses (big gap between consecutive rows) and balanced durations.
-function segmentCaptionRows(rows, minSize = 3, maxSize = 5) {
-  const n = rows.length;
-  if (n <= maxSize) return [{ start: rows[0].start, end: rows[n - 1].end, rows }];
-  const dp = Array.from({ length: n + 1 }, () => ({ cost: Infinity, prev: -1 }));
-  dp[0] = { cost: 0, prev: -1 };
-  const totalDur = Math.max(0.1, rows[n - 1].end - rows[0].start);
-  const ideal = totalDur / Math.max(1, Math.ceil(n / maxSize));
-  for (let i = minSize; i <= n; i++) {
-    for (let s = minSize; s <= maxSize; s++) {
-      const j = i - s;
-      if (j < 0 || !Number.isFinite(dp[j].cost)) continue;
-      const segDur = rows[i - 1].end - rows[j].start;
-      const gap = j === 0 ? 0 : rows[j].start - rows[j - 1].end;
-      const cost = dp[j].cost + Math.pow(segDur - ideal, 2) * 0.05 - gap * 1.5;
-      if (cost < dp[i].cost) dp[i] = { cost, prev: j };
-    }
-  }
-  const segs = [];
-  let i = n;
-  while (i > 0) {
-    const j = dp[i].prev;
-    if (j < 0) break;
-    segs.unshift({ start: rows[j].start, end: rows[i - 1].end, rows: rows.slice(j, i) });
-    i = j;
-  }
-  return segs;
-}
-
 function createIntro(brief) {
   const displayTitle = getDisplayTitle(brief);
   const titleLayout = getTitleLayout(displayTitle);
@@ -214,15 +185,10 @@ function createBody(brief, rows, audioTimings) {
   const displayTitle = getDisplayTitle(brief);
   const titleLayout = getTitleLayout(displayTitle);
   fs.mkdirSync(path.join(bodyDir, "media"), { recursive: true });
-  // result-bridge.png is the fixed opening bridge behind the book-title card.
-  // Body content scenes use atmosphere-1..N in order (one per DP segment).
+  // result-bridge.png is separate; each DP body scene gets its own atmosphere image.
   const bridgeImage = path.join(imagesDir, "result-bridge.png");
-  const sceneImageSources = [];
-  for (let i = 1; fs.existsSync(path.join(imagesDir, `atmosphere-${i}.png`)); i++) {
-    sceneImageSources.push(path.join(imagesDir, `atmosphere-${i}.png`));
-  }
   if (fs.existsSync(bridgeImage)) {
-    copyFile(bridgeImage, path.join(bodyDir, "media", "scene-bridge.jpg"));
+    copyFile(bridgeImage, path.join(bodyDir, "media", "scene-bridge.png"));
   }
   fs.mkdirSync(path.join(bodyDir, "fonts"), { recursive: true });
   copyFile(
@@ -237,6 +203,12 @@ function createBody(brief, rows, audioTimings) {
   // The book title (order 1) is already shown as the big top title card;
   // do NOT repeat it as a bottom subtitle.
   const captionRows = rows.filter((row) => Number(row.order) !== 1);
+  const sceneImageNames = getAtmosphereImageNames(captionRows.length);
+  const sceneImageSources = sceneImageNames.map((name) => path.join(imagesDir, name));
+  const missingSceneImages = sceneImageNames.filter((name) => !fs.existsSync(path.join(imagesDir, name)));
+  if (missingSceneImages.length) {
+    throw new Error(`Need ${sceneImageNames.length} atmosphere images (3-5 caption rows per scene); missing: ${missingSceneImages.join(", ")}`);
+  }
 
   const estimatedByOrder = audioTimings?.duration && audioTimings.byOrder.size === 0
     ? new Map(buildEstimatedCaptionTimings(
@@ -282,10 +254,11 @@ function createBody(brief, rows, audioTimings) {
   const safeDuration = Number(Math.max(duration, lastCaptionEnd + 0.4).toFixed(2));
   const segments = segmentCaptionRows(speechTimings, 3, 5);
   if (segments.length !== sceneImageSources.length) {
-    throw new Error(`Need ${segments.length} scene images (3-5 rows each) in images/ but found ${sceneImageSources.length}`);
+    throw new Error(`Scene plan needs ${segments.length} atmosphere images, but script row count planned ${sceneImageSources.length}`);
   }
-  segments.forEach((seg, i) => copyFile(sceneImageSources[i], path.join(bodyDir, "media", `scene-${i}.jpg`)));
-  console.log(`[scenes] ${segments.length} scenes: ` + segments.map((s) => `${s.rows.length}行@${s.start.toFixed(1)}s`).join(" | "));
+  segments.forEach((_, i) => copyFile(sceneImageSources[i], path.join(bodyDir, "media", `scene-${i}.png`)));
+  console.log(`[scenes] ${segments.length} scenes (3-5 caption rows each): `
+    + segments.map((s) => `${s.rows.length}行@${s.start.toFixed(1)}s`).join(" | "));
 
   const captionHtml = captionRows
     .map((row) => {
@@ -300,8 +273,8 @@ function createBody(brief, rows, audioTimings) {
 
   const bodyStart = segments[0].start; // bridge covers the book-title moment up to first subtitle
   const sceneCss = [
-    `      .sc-bridge .photo { background-image: url("media/scene-bridge.jpg"); }`,
-    ...segments.map((_, i) => `      .sc${i} .photo { background-image: url("media/scene-${i}.jpg"); }`),
+    `      .sc-bridge .photo { inset: 0; background-image: url("media/scene-bridge.png"); }`,
+    ...segments.map((_, i) => `      .sc${i} .photo { background-image: url("media/scene-${i}.png"); }`),
   ].join("\n");
   const sceneHtml = [
     `<section class="scene sc-bridge" data-layout-ignore><div class="photo" data-layout-ignore></div></section>`,

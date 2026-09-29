@@ -10,6 +10,7 @@ import {
 } from "./media-validation.mjs";
 import { resolveScriptVersion } from "./script-version.mjs";
 import { validateBodyScript } from "./script-policy.mjs";
+import { getAtmosphereImageNames } from "./body-scenes.mjs";
 
 export const WORKFLOW_STEPS = Object.freeze([
   "book_ready",
@@ -37,12 +38,15 @@ export const WORKFLOW_DEPENDENCIES = Object.freeze({
 
 const STATE_FILE = "workflow-state.json";
 const RUNNING_TIMEOUT_MS = 30 * 60 * 1000;
-const REQUIRED_IMAGES = [
-  "result-bridge.png",
-  "atmosphere-1.png",
-  "atmosphere-2.png",
-  "atmosphere-3.png",
-];
+function requiredImageNames(episodeDir) {
+  const scriptPath = path.join(episodeDir, "script.csv");
+  if (!fs.existsSync(scriptPath)) return ["result-bridge.png"];
+  const version = resolveScriptVersion(episodeDir);
+  const bodyRowCount = readCsv(scriptPath).rows
+    .filter((row) => row.version === version && Number(row.order) !== 1)
+    .length;
+  return ["result-bridge.png", ...getAtmosphereImageNames(bodyRowCount)];
+}
 
 function createStep() {
   return {
@@ -332,11 +336,13 @@ function inputTargets(episodeDir, step) {
 }
 
 function outputTargets(episodeDir, step) {
+  if (step === "illustrated") {
+    return ["prompts.csv", ...requiredImageNames(episodeDir).map((name) => path.join("images", name))];
+  }
   const targets = {
     book_ready: ["brief.json"],
     script_validated: ["script.csv"],
     script_approved: ["script-approval.json"],
-    illustrated: ["prompts.csv", ...REQUIRED_IMAGES.map((name) => path.join("images", name))],
     voiced: [path.join("audio", "body-voiceover.mp3"), ...generatedIntroTargets(episodeDir)],
     timed: [path.join("audio", "body-timings.json")],
     rendered: [renderRelativePath(episodeDir)].filter(Boolean),
@@ -403,7 +409,7 @@ function assessArtifacts(episodeDir, step) {
   }
 
   if (step === "illustrated") {
-    const valid = REQUIRED_IMAGES.every(
+    const valid = requiredImageNames(episodeDir).every(
       (name) => validPngArtifact(path.join(episodeDir, "images", name)),
     ) && fs.existsSync(path.join(episodeDir, "prompts.csv"));
     return { valid, trust: "weak", quality: "review_required" };
@@ -791,7 +797,8 @@ export function revalidateWorkflowStep(
   const scriptRows = readCsv(path.join(episodeDir, "script.csv")).rows
     .filter((row) => row.version === scriptVersion)
     .sort((left, right) => Number(left.order) - Number(right.order));
-  const checkedCount = step === "voiced" ? scriptRows.length : REQUIRED_IMAGES.length;
+  const illustrationImageCount = requiredImageNames(episodeDir).length;
+  const checkedCount = step === "voiced" ? scriptRows.length : illustrationImageCount;
   const expectedEvidence = step === "voiced"
     ? `voiced@${scriptVersion}:逐句核听 ${checkedCount}/${checkedCount} 行，并确认全部与当前稿逐行一致`
     : `illustrated@${scriptVersion}:逐张检查 ${checkedCount}/${checkedCount} 张图片，并确认每张均适配当前稿`;

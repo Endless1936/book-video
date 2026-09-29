@@ -435,7 +435,7 @@ for (const step of ["script_approved", "illustrated", "voiced", "timed", "render
 }
 assert.equal(fs.existsSync(renderPath), true);
 
-const reviewEvidence = "illustrated@A:逐张检查 4/4 张图片，并确认每张均适配当前稿";
+const reviewEvidence = "illustrated@A:逐张检查 2/2 张图片，并确认每张均适配当前稿";
 const voiceReviewEvidence = "voiced@A:逐句核听 4/4 行，并确认全部与当前稿逐行一致";
 const revalidateWithoutApproval = spawnSync(
   process.execPath,
@@ -494,7 +494,7 @@ for (const step of ["illustrated", "voiced"]) {
   assert.equal(summary.steps[step].status, "valid");
   assert.equal(summary.steps[step].revalidation.step, step);
   assert.equal(summary.steps[step].revalidation.scriptVersion, "A");
-  assert.equal(summary.steps[step].revalidation.checkedCount, step === "voiced" ? 4 : 4);
+  assert.equal(summary.steps[step].revalidation.checkedCount, step === "voiced" ? 4 : 2);
   assert.equal(summary.steps[step].revalidation.evidence, evidence);
 }
 state = reconcileWorkflowState(episodeDir);
