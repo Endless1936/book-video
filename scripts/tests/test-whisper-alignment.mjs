@@ -115,6 +115,62 @@ const titleRows = [
   { order: 1, text: "《被讨厌的勇气》" },
   { order: 2, text: "你有没有失去过一个重要的人" },
 ];
+const partialBodyTime = alignScriptToWhisper(titleRows, asr([
+  { text: "今天分享的是", offsets: { from: 0, to: 500 }, tokens: [
+    { text: "今天分享的" },
+    token("是", 400, 500),
+  ] },
+  { text: "被讨厌的勇气", offsets: { from: 800, to: 1400 }, tokens: [token("被讨厌的勇气", 800, 1400)] },
+  { text: "你有没有失去过一个重要的人", offsets: { from: 1500, to: 3000 }, tokens: [
+    { text: "你有没有失去过一个重要的人" },
+  ] },
+]));
+assert.equal(partialBodyTime.timestampsAvailable, false);
+assert.equal(partialBodyTime.sequenceMappable, true);
+assert.equal(partialBodyTime.firstScriptTokenOffsetAvailable, true);
+assert.equal(partialBodyTime.diagnostics.detectedLeadIn.tokenOffsetsAvailable, true);
+assert.doesNotThrow(() => deriveGeneratedVoiceoverSplit(partialBodyTime, {
+  standardIntroDuration: 3.024,
+  rawDuration: 8,
+}));
+
+const missingTitleFirstTime = alignScriptToWhisper(titleRows, asr([
+  { text: "今天分享的是", offsets: { from: 0, to: 500 }, tokens: [token("今天分享的是", 0, 500)] },
+  { text: "被讨厌的勇气", offsets: { from: 800, to: 1400 }, tokens: [
+    { text: "被" },
+    token("讨厌的勇气", 900, 1400),
+  ] },
+  { text: "你有没有失去过一个重要的人", offsets: { from: 1500, to: 3000 }, tokens: [token("你有没有失去过一个重要的人", 1500, 3000)] },
+]));
+assert.equal(missingTitleFirstTime.firstScriptTokenOffsetAvailable, false);
+assert.throws(() => deriveGeneratedVoiceoverSplit(missingTitleFirstTime, {
+  standardIntroDuration: 3.024,
+  rawDuration: 8,
+}));
+
+const firstTitleCharacterTypo = alignScriptToWhisper(titleRows, asr([
+  { text: "今天分享的是", offsets: { from: 0, to: 500 }, tokens: [token("今天分享的是", 0, 500)] },
+  { text: "北讨厌的勇气", offsets: { from: 800, to: 1400 }, tokens: [token("北讨厌的勇气", 800, 1400)] },
+  { text: "你有没有失去过一个重要的人", offsets: { from: 1500, to: 3000 }, tokens: [token("你有没有失去过一个重要的人", 1500, 3000)] },
+]));
+assert.equal(firstTitleCharacterTypo.sequenceMappable, true);
+assert.equal(firstTitleCharacterTypo.firstScriptTokenOffsetAvailable, true);
+assert.doesNotThrow(() => deriveGeneratedVoiceoverSplit(firstTitleCharacterTypo, {
+  standardIntroDuration: 3.024,
+  rawDuration: 8,
+}));
+
+const greetingAndTitleCombined = "今天分享的是被讨厌的勇气";
+const combinedBoundary = alignScriptToWhisper(titleRows, asr([
+  { text: greetingAndTitleCombined, offsets: { from: 0, to: 1400 }, tokens: [token(greetingAndTitleCombined, 0, 1400)] },
+  { text: "你有没有失去过一个重要的人", offsets: { from: 1500, to: 3000 }, tokens: [token("你有没有失去过一个重要的人", 1500, 3000)] },
+]));
+assert.equal(combinedBoundary.firstScriptTokenOffsetAvailable, true);
+assert.throws(() => deriveGeneratedVoiceoverSplit(combinedBoundary, {
+  standardIntroDuration: 3.024,
+  rawDuration: 8,
+}), (error) => error.code === "generated_greeting_not_separable");
+
 const typoGreetingAsr = asr([
   { text: "今天分享的事", offsets: { from: 0, to: 850 }, tokens: [token("今天分享的事", 0, 850)] },
   { text: "讨厌的勇气", offsets: { from: 1050, to: 2100 }, tokens: [token("讨厌的勇气", 1050, 2100)] },
@@ -125,25 +181,14 @@ assert.equal(titleAlignment.ok, true, "a likely ASR typo in the known greeting r
 assert.equal(titleAlignment.captions.length, 2);
 assert.equal(titleAlignment.diagnostics.rows[0].role, "title");
 assert.ok(titleAlignment.diagnostics.rows[0].coverage >= 0.8, "the title still maps when Whisper drops its first character");
-assert.equal(titleAlignment.firstScriptTokenOffsetAvailable, true);
+assert.equal(titleAlignment.firstScriptTokenOffsetAvailable, false, "the second title character cannot stand in for the missing first character");
+assert.equal(titleAlignment.diagnostics.titleStartAnchorUnavailable, true);
 assert.equal(titleAlignment.captions[0].start, 1.05, "the book title is the first aligned script row");
 assert.equal(titleAlignment.diagnostics.rows[0].recognizedText, "讨厌的勇气");
-const split = deriveGeneratedVoiceoverSplit(titleAlignment, {
+assert.throws(() => deriveGeneratedVoiceoverSplit(titleAlignment, {
   standardIntroDuration: 3.024,
   rawDuration: 4.3,
-});
-assert.equal(split.introDuration, 3.024);
-assert.equal(split.greetingSpeechEnd, 0.85);
-assert.ok(split.bodySourceStart > split.greetingSpeechEnd);
-assert.ok(split.bodySourceStart < split.titleSpeechStart);
-assert.throws(
-  () => deriveGeneratedVoiceoverSplit(titleAlignment, {
-    standardIntroDuration: 3.024,
-    rawDuration: 4.3,
-    pageFlipStartSeconds: 0.7,
-  }),
-  (error) => error.code === "generated_greeting_too_long",
-);
+}), (error) => error.code === "generated_greeting_timestamps_missing");
 
 const overlappingIntroRows = [
   { order: 1, text: "今天分享的是一本让我遗憾的书" },
@@ -252,15 +297,18 @@ const reordered = alignScriptToWhisper(rows, asr([
 ]));
 assert.equal(reordered.ok, false);
 
-const noTokenOffsets = alignScriptToWhisper(rows, asr([
+const noTokenOffsetsAsr = asr([
   { text: "你有没有失去过一个重要的人后来才发现那时就是最好的时候", offsets: { from: 0, to: 4000 }, tokens: [
     { text: "你有没有失去过一个重要的人后来才发现那时就是最好的时候" },
   ] },
-]));
+]);
+const noTokenOffsets = alignScriptToWhisper(rows, noTokenOffsetsAsr);
 assert.equal(noTokenOffsets.timestampsAvailable, false);
 assert.equal(noTokenOffsets.ok, false);
 assert.equal(noTokenOffsets.contentValid, true);
 assert.ok(noTokenOffsets.diagnostics.issues.some((issue) => issue.code === "token_timestamps_missing"));
+assert.equal(noTokenOffsets.firstScriptTokenOffsetAvailable, false);
+assert.ok(flattenWhisperCharacters(noTokenOffsetsAsr).characters.every((item) => item.start === null && item.end === null));
 
 const noWhisperText = alignScriptToWhisper(rows, asr([]));
 assert.equal(noWhisperText.textAvailable, false);

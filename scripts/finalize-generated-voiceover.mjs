@@ -13,6 +13,7 @@ import { alignScriptToWhisper } from "./lib/body-timings.mjs";
 import { completeWorkflowStep } from "./lib/workflow-state.mjs";
 import {
   deriveGeneratedVoiceoverSplit,
+  findLeadingSilence,
   GENERATED_INTRO_GREETING,
   replaceArtifactsTransactionally,
 } from "./lib/generated-voiceover.mjs";
@@ -150,15 +151,14 @@ const leadingSilenceDetect = spawnSync("ffmpeg", [
   "-f", "null", "-",
 ], { encoding: "utf8" });
 const silenceLog = `${leadingSilenceDetect.stderr || ""}`;
-const leadingSilenceMatch = silenceLog.match(/silence_start: ([\d.]+)\s*\n\s*silence_end: ([\d.]+)/);
-if (leadingSilenceMatch) {
-  const sStart = Number(leadingSilenceMatch[1]);
-  const sEnd = Number(leadingSilenceMatch[2]);
+const leadingSilence = findLeadingSilence(silenceLog, rawVoiceover.duration);
+if (leadingSilence) {
+  const { start: sStart, end: sEnd } = leadingSilence;
   // Leading silence: starts near 0 (within 0.5s) and lasts more than 3s.
-  if (sStart < 0.5 && sEnd > 3) {
+  if (sStart < 0.5 && sEnd - sStart > 3) {
     throw new WorkflowError(
       `Generated raw voiceover has ${sEnd.toFixed(1)}s of leading silence. ` +
-      `Trim it (e.g. ffmpeg -af "atrim=${sEnd.toFixed(2)},asetpts=PTS-STARTPTS") ` +
+      `Trim it (e.g. ffmpeg -af "atrim=start=${sEnd.toFixed(2)},asetpts=PTS-STARTPTS") ` +
       `so whisper can place the greeting correctly.`,
       { code: "generated_voiceover_long_leading_silence" },
     );
@@ -210,13 +210,10 @@ const scriptAlignment = alignScriptToWhisper(rows, asr, {
 });
 if (
   !scriptAlignment.sequenceMappable
-  || !scriptAlignment.timestampsAvailable
-  || scriptAlignment.captions.length !== rows.length
-  || !scriptAlignment.captions.every((caption) => Number.isFinite(caption.start) && Number.isFinite(caption.end))
 ) {
   const differences = scriptAlignment.diagnostics.issues.map((issue) => issue.message);
   throw new WorkflowError(
-    `Generated voiceover alignment blocked: ${differences.join(" ") || "Whisper could not map the approved script to token timestamps."}`,
+    `Generated voiceover alignment blocked: ${differences.join(" ") || "Whisper could not map the approved script text."}`,
     {
       code: "generated_voiceover_script_alignment_failed",
       details: {
@@ -231,8 +228,8 @@ if (
   );
 }
 
-if (scriptAlignment.diagnostics.requiresAgentReview || !scriptAlignment.contentValid) {
-  console.warn("Whisper text differs from the approved script; review the audio and keep script.csv as subtitle truth:");
+if (scriptAlignment.diagnostics.requiresAgentReview || !scriptAlignment.contentValid || !scriptAlignment.timestampsAvailable) {
+  console.warn("Whisper text or token timing is incomplete; review the audio and keep script.csv as subtitle truth:");
   console.warn(JSON.stringify({
     issues: scriptAlignment.diagnostics.issues,
     rows: scriptAlignment.diagnostics.rows.filter((row) => !row.exact),

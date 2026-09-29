@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   deriveGeneratedVoiceoverSplit,
+  findLeadingSilence,
   replaceArtifactsTransactionally,
 } from "../lib/generated-voiceover.mjs";
 
@@ -28,6 +29,21 @@ const split = deriveGeneratedVoiceoverSplit(alignment, {
 assert.equal(split.introDuration, 3.024);
 assert.equal(split.bodySourceStart, 1.125);
 assert.ok(split.introSourceEnd <= split.bodySourceStart, "the greeting clip must not contain any title audio");
+assert.doesNotThrow(() => deriveGeneratedVoiceoverSplit({
+  ...alignment,
+  timestampsAvailable: false,
+}, { standardIntroDuration: 3.024, rawDuration: 8 }));
+assert.throws(() => deriveGeneratedVoiceoverSplit({
+  ...alignment,
+  firstScriptTokenOffsetAvailable: false,
+}, { standardIntroDuration: 3.024, rawDuration: 8 }));
+assert.deepEqual(findLeadingSilence(
+  "[silencedetect @ 0xabc] silence_start: 0\n[silencedetect @ 0xabc] silence_end: 3.4 | silence_duration: 3.4",
+), { start: 0, end: 3.4 });
+assert.equal(findLeadingSilence(
+  "[silencedetect @ 0xabc] silence_start: 5.1\n[silencedetect @ 0xabc] silence_end: 7.4 | silence_duration: 2.3",
+), null, "an internal pause must not be treated as leading silence");
+assert.deepEqual(findLeadingSilence("[silencedetect @ 0xabc] silence_start: 0", 4.5), { start: 0, end: 4.5 });
 assert.throws(
   () => deriveGeneratedVoiceoverSplit({
     ...alignment,

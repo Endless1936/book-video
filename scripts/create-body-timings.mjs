@@ -195,7 +195,7 @@ if (!whisperFailure) {
   const skipLeadingResult = deriveSkipLeadingSegments(speechSegments, whisperAlignment);
   if (!skipLeadingResult.canDerive) {
     throw new WorkflowError(
-      `Whisper detected spoken lead-in “${whisperAlignment.diagnostics.detectedLeadIn.text}”, but complete token offsets are unavailable. The lead-in cannot be safely separated from script timing.`,
+      `Whisper detected spoken lead-in “${whisperAlignment.diagnostics.detectedLeadIn.text}”, but reliable timestamps for the greeting end and first book-title character are unavailable. The lead-in cannot be safely separated from script timing.`,
       {
         code: "voiceover_script_alignment_failed",
         details: {
@@ -206,7 +206,7 @@ if (!whisperFailure) {
           whisperJson: fs.existsSync(`${asrBase}.json`) ? path.relative(ROOT, `${asrBase}.json`) : null,
         },
         nextActions: [
-          "Regenerate Whisper JSON with token offsets, then rerun timing generation.",
+          "Regenerate Whisper JSON with token offsets for the greeting end and first book-title character, then rerun timing generation.",
           "If token offsets remain unavailable, inspect the audio and decide the lead-in boundary before proceeding.",
         ],
       },

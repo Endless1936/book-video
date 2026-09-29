@@ -103,18 +103,13 @@ export function flattenWhisperCharacters(asr) {
         if (!offsets) {
           hasTokenTimestamps = false;
           usedSegmentFallback = true;
-          // No per-token timestamp: place characters right after the last emitted one
-          // instead of falling back to the whole-segment span (which reverses time).
-          const lastEnd = characters.length ? characters[characters.length - 1].end : 0.05;
-          const chars = Array.from(normalized);
-          chars.forEach((character) => {
-            characters.push({ character, start: lastEnd, end: lastEnd + 0.05, segmentIndex, timestampSource: "missing" });
-          });
+          // Keep recognized text for sequence matching, but never invent token times.
+          appendTimedText(characters, token.text, null, { segmentIndex, timestampSource: "missing" });
           continue;
         }
         appendTimedText(characters, token.text, offsets, {
           segmentIndex,
-          timestampSource: offsets ? "token" : fallbackOffsets ? "segment" : "missing",
+          timestampSource: "token",
         });
       }
     } else {
@@ -129,11 +124,8 @@ export function flattenWhisperCharacters(asr) {
     }
   });
 
-  // hasTokenTimestamps stays true only when every recognized character came
-  // from a real whisper token offset. Characters that were placed by our
-  // fallback (lastEnd interpolation) are finite but estimated — we surface that
-  // separately as timelineEstimated so downstream callers (greeting split) can
-  // require real anchors for boundary decisions.
+  // Keep real token timestamps distinct from missing values. Caption timing can
+  // fall back downstream; generated greeting splits need their own real anchors.
   const allFinite = characters.length > 0 && characters.every(c => Number.isFinite(c.start) && Number.isFinite(c.end));
   return { characters, hasTokenTimestamps, usedSegmentFallback, timelineEstimated: allFinite && !hasTokenTimestamps };
 }
@@ -368,37 +360,30 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
   const prefixText = textAtIndexes(recognized, prefixIndexes);
   const suffixText = textAtIndexes(recognized, suffixIndexes);
   const internalExtraText = textAtIndexes(recognized, aligned.internalExtraIndexes.map((index) => index + alignmentOffset));
+  const firstExpectedTitleIndex = expected.findIndex((item) => item.rowIndex === 0);
   const firstMappedTitleCharacter = [...aligned.expectedToRecognized.entries()]
     .filter(([expectedIndex]) => expected[expectedIndex]?.rowIndex === 0)
     .sort(([left], [right]) => left - right)[0];
-  const firstScriptIndex = firstMappedTitleCharacter?.[1];
+  const firstScriptIndex = aligned.expectedToRecognized.get(firstExpectedTitleIndex);
   const firstRecognizedIndex = Number.isInteger(firstScriptIndex) ? firstScriptIndex + alignmentOffset : null;
 
-  // Title start: only consider recognized characters that are actually mapped to
-  // the title row (rowIndex === 0). Do NOT scan forward through the whole transcript
-  // — borrowing a body-token timestamp as the title start is unsound.
-  const titleRecognizedIndexes = [...aligned.expectedToRecognized.entries()]
-    .filter(([expectedIndex]) => expected[expectedIndex]?.rowIndex === 0)
-    .map(([, recognizedIndex]) => recognizedIndex + alignmentOffset)
-    .sort((a, b) => a - b);
-  let firstScript = null;
-  for (const idx of titleRecognizedIndexes) {
-    const ch = recognized[idx];
-    if (ch && ch.timestampSource === "token" && Number.isFinite(ch.start)) {
-      firstScript = ch;
-      break;
-    }
-  }
-  if (firstScript && Number.isFinite(firstScript.start)) {
+  // A generated split needs the first expected title character itself. If Whisper
+  // drops it, using the next character could cut off the spoken title opening.
+  const firstScript = firstRecognizedIndex === null ? null : recognized[firstRecognizedIndex];
+  if (firstScript?.timestampSource === "token" && Number.isFinite(firstScript.start)) {
     result.firstScriptTokenTime = firstScript.start;
     result.firstScriptTokenOffsetAvailable = true;
     result.diagnostics.firstMappedTitleCharacter = firstMappedTitleCharacter?.[0] ?? 0;
+  } else if (firstExpectedTitleIndex >= 0 && !Number.isInteger(firstScriptIndex)) {
+    result.diagnostics.titleStartAnchorUnavailable = true;
   }
 
   if (prefixText) {
     const prefixChars = prefixIndexes.map((index) => recognized[index]);
-    const prefixDuration = prefixChars.length && prefixChars.every((item) => Number.isFinite(item.start) && Number.isFinite(item.end))
-      ? Math.max(...prefixChars.map((item) => item.end)) - Math.min(...prefixChars.map((item) => item.start))
+    const timedPrefixChars = prefixChars.filter((item) => item.timestampSource === "token"
+      && Number.isFinite(item.start) && Number.isFinite(item.end));
+    const prefixDuration = timedPrefixChars.length
+      ? Math.max(...timedPrefixChars.map((item) => item.end)) - Math.min(...timedPrefixChars.map((item) => item.start))
       : Number.POSITIVE_INFINITY;
     const containsTitle = title.length >= 2 && prefixText.includes(title);
     if (containsTitle) {
@@ -407,7 +392,8 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
         message: `Whisper detected the book title before the approved script: “${prefixText}”.`,
         text: prefixText,
       });
-    } else if (!likelyIntroPrefix(prefixText) || prefixChars.length > 36 || prefixDuration > 4) {
+    } else if (!likelyIntroPrefix(prefixText) || prefixChars.length > 36
+      || (Number.isFinite(prefixDuration) && prefixDuration > 4)) {
       result.diagnostics.issues.push({
         code: "unexpected_leading_speech",
         message: `Unmatched speech precedes the script: “${prefixText}”.`,
@@ -416,12 +402,11 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     } else {
       result.diagnostics.detectedLeadIn = {
         text: prefixText,
-        tokenOffsetsAvailable: prefixChars[prefixChars.length - 1]?.timestampSource === "token",
-        start: prefixChars.every((item) => Number.isFinite(item.start))
-          ? Math.min(...prefixChars.map((item) => item.start))
-          : null,
-        end: prefixChars.every((item) => Number.isFinite(item.end))
-          ? Math.max(...prefixChars.map((item) => item.end))
+        tokenOffsetsAvailable: prefixChars.at(-1)?.timestampSource === "token"
+          && Number.isFinite(prefixChars.at(-1)?.end),
+        start: prefixChars.find((item) => item.timestampSource === "token" && Number.isFinite(item.start))?.start ?? null,
+        end: prefixChars.at(-1)?.timestampSource === "token" && Number.isFinite(prefixChars.at(-1)?.end)
+          ? prefixChars.at(-1).end
           : null,
       };
     }
@@ -610,8 +595,7 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
 export function deriveSkipLeadingSegments(speechSegments, alignment) {
   const leadIn = alignment?.diagnostics?.detectedLeadIn;
   if (!leadIn) return { canDerive: true, skipLeading: 0 };
-  const hasReliableTokenOffsets = alignment.timestampsAvailable
-    && alignment.firstScriptTokenOffsetAvailable
+  const hasReliableTokenOffsets = alignment.firstScriptTokenOffsetAvailable
     && leadIn.tokenOffsetsAvailable;
   if (!hasReliableTokenOffsets || !Number.isFinite(alignment.firstScriptTokenTime)) {
     return { canDerive: false, skipLeading: 0 };

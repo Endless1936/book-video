@@ -7,6 +7,24 @@ export const INTRO_PAGE_FLIP_START_SECONDS = 1.08;
 export const GENERATED_INTRO_GREETING = "今天分享的是";
 export const GENERATED_INTRO_TAIL_SECONDS = 0.12;
 
+export function findLeadingSilence(logText, audioDuration = null) {
+  const events = String(logText ?? "").matchAll(/\bsilence_(start|end):\s*(-?(?:\d+\.?\d*|\.\d+))/g);
+  let start = null;
+  for (const [, kind, rawValue] of events) {
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) continue;
+    if (kind === "start") {
+      start = value;
+      continue;
+    }
+    if (start !== null) return start < 0.5 ? { start, end: value } : null;
+  }
+  const duration = Number(audioDuration);
+  return start !== null && start < 0.5 && Number.isFinite(duration) && duration > 0
+    ? { start, end: duration }
+    : null;
+}
+
 export function replaceArtifactsTransactionally(
   replacements,
   {
@@ -119,18 +137,14 @@ export function deriveGeneratedVoiceoverSplit(
     );
   }
   if (
-    !alignment.timestampsAvailable
-    || alignment.timelineEstimated === true
-    || !leadIn.tokenOffsetsAvailable
+    !leadIn.tokenOffsetsAvailable
     || !alignment.firstScriptTokenOffsetAvailable
     || !Number.isFinite(leadIn.end)
     || !Number.isFinite(alignment.firstScriptTokenTime)
   ) {
     throw splitError(
       "generated_greeting_timestamps_missing",
-      alignment.timelineEstimated
-        ? "Whisper token offsets are incomplete; the greeting/script boundary cannot be split automatically. Keep the previous voiceover and use the Jianying path, or regenerate the audio so whisper produces per-token offsets."
-        : "Whisper token timestamps are required to separate the cloned greeting from the script audio.",
+      "Whisper token timestamps are required for the greeting end and first book-title character to separate the generated clips safely.",
     );
   }
   if (!Number.isFinite(standardIntroDuration) || standardIntroDuration <= 0) {
