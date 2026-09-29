@@ -4,39 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  deriveGeneratedVoiceoverSplit,
   findLeadingSilence,
   replaceArtifactsTransactionally,
 } from "../lib/generated-voiceover.mjs";
 
-const alignment = {
-  timestampsAvailable: true,
-  firstScriptTokenOffsetAvailable: true,
-  firstScriptTokenTime: 1.4,
-  diagnostics: {
-    detectedLeadIn: {
-      text: "今天分享的是",
-      tokenOffsetsAvailable: true,
-      start: 0.1,
-      end: 0.85,
-    },
-  },
-};
-const split = deriveGeneratedVoiceoverSplit(alignment, {
-  standardIntroDuration: 3.024,
-  rawDuration: 8,
-});
-assert.equal(split.introDuration, 3.024);
-assert.equal(split.bodySourceStart, 1.125);
-assert.ok(split.introSourceEnd <= split.bodySourceStart, "the greeting clip must not contain any title audio");
-assert.doesNotThrow(() => deriveGeneratedVoiceoverSplit({
-  ...alignment,
-  timestampsAvailable: false,
-}, { standardIntroDuration: 3.024, rawDuration: 8 }));
-assert.throws(() => deriveGeneratedVoiceoverSplit({
-  ...alignment,
-  firstScriptTokenOffsetAvailable: false,
-}, { standardIntroDuration: 3.024, rawDuration: 8 }));
 assert.deepEqual(findLeadingSilence(
   "[silencedetect @ 0xabc] silence_start: 0\n[silencedetect @ 0xabc] silence_end: 3.4 | silence_duration: 3.4",
 ), { start: 0, end: 3.4 });
@@ -44,35 +15,6 @@ assert.equal(findLeadingSilence(
   "[silencedetect @ 0xabc] silence_start: 5.1\n[silencedetect @ 0xabc] silence_end: 7.4 | silence_duration: 2.3",
 ), null, "an internal pause must not be treated as leading silence");
 assert.deepEqual(findLeadingSilence("[silencedetect @ 0xabc] silence_start: 0", 4.5), { start: 0, end: 4.5 });
-assert.throws(
-  () => deriveGeneratedVoiceoverSplit({
-    ...alignment,
-    diagnostics: { detectedLeadIn: { ...alignment.diagnostics.detectedLeadIn, text: "早上好" } },
-  }, { standardIntroDuration: 3.024, rawDuration: 8 }),
-  (error) => error.code === "generated_greeting_missing",
-);
-assert.throws(
-  () => deriveGeneratedVoiceoverSplit({
-    ...alignment,
-    diagnostics: { detectedLeadIn: { ...alignment.diagnostics.detectedLeadIn, end: 2.22 } },
-  }, { standardIntroDuration: 3.024, rawDuration: 8 }),
-  (error) => error.code === "generated_greeting_too_long",
-);
-assert.throws(
-  () => deriveGeneratedVoiceoverSplit({
-    ...alignment,
-    diagnostics: { detectedLeadIn: { ...alignment.diagnostics.detectedLeadIn, end: 1.0 } },
-  }, { standardIntroDuration: 3.024, rawDuration: 8 }),
-  (error) => error.code === "generated_greeting_too_long",
-  "the greeting and its tail must finish before the page flip",
-);
-const safeBoundary = deriveGeneratedVoiceoverSplit({
-  ...alignment,
-  firstScriptTokenTime: 2.6,
-  diagnostics: { detectedLeadIn: { ...alignment.diagnostics.detectedLeadIn, end: 0.9 } },
-}, { standardIntroDuration: 3.024, rawDuration: 8 });
-assert.equal(safeBoundary.introSourceEnd, 1.02);
-
 const transactionDir = fs.mkdtempSync(path.join(os.tmpdir(), "book-video-artifact-transaction-"));
 try {
   const destinationA = path.join(transactionDir, "a.txt");
@@ -164,4 +106,4 @@ try {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }
 
-console.log("generated voiceover split: ok");
+console.log("generated voiceover utilities: ok");

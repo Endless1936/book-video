@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
+// Body timing generation from FFmpeg silencedetect speech boundaries only.
+// Each speech segment maps to one script row in order. A single extra leading
+// segment (a spoken opener such as "今天分享的是") is skipped for compatibility;
+// anything else is coalesced or estimated and marked for review.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  alignScriptToWhisper,
   buildCaptionTimings,
   buildEstimatedCaptionTimings,
   buildSpeechSegments,
   coalesceSpeechSegments,
-  deriveSkipLeadingSegments,
   parseSilenceEvents,
 } from "./lib/body-timings.mjs";
 import { readCsv } from "./lib/csv.mjs";
@@ -20,7 +22,6 @@ import { WorkflowError, installWorkflowDiagnostics } from "./lib/workflow-diagno
 import { beginWorkflowStep, completeWorkflowStep } from "./lib/workflow-state.mjs";
 
 const ROOT = process.cwd();
-const MODEL_PATH = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
 const [episodeName, ...rawArgs] = process.argv.slice(2);
 const episodeDir = episodeName ? path.join(ROOT, "episodes", episodeName) : "";
 
@@ -29,12 +30,6 @@ function readOptions(values) {
   const options = { noise: "-35dB", silenceDuration: "0.18", voiceoverNotBefore: "" };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    if (value === "--skip-leading" || value.startsWith("--skip-leading=")) {
-      throw new WorkflowError("--skip-leading is no longer accepted; Whisper derives any spoken lead-in automatically.", {
-        code: "manual_skip_leading_removed",
-        nextActions: ["Remove --skip-leading and rerun; inspect the Whisper alignment report if the lead-in is unexpected."],
-      });
-    }
     if (value === "--noise" || value === "--silence-duration" || value === "--voiceover-not-before") {
       if (index + 1 >= values.length || values[index + 1] === "") {
         throw new WorkflowError(`${value} requires a value`, { code: "invalid_arguments" });
@@ -95,7 +90,7 @@ installWorkflowDiagnostics({
   nextActions: [
     "Inspect the episode, active script version, and voiceover path named in the error.",
     "Repair or replace only the failing input, then rerun timing generation.",
-    "If ASR or pause detection fails, retain the generated duration-based fallback and require Agent review.",
+    "If pause detection fails, retain the generated duration-based fallback and require Agent review.",
   ],
 });
 
@@ -116,8 +111,6 @@ const scriptPath = path.join(episodeDir, "script.csv");
 const defaultVoicePath = path.join(episodeDir, "audio", "body-voiceover.mp3");
 const voicePath = path.resolve(ROOT, positional[0] || defaultVoicePath);
 const workflowDependencies = voicePath === path.resolve(defaultVoicePath) ? undefined : ["script_approved"];
-const asrDir = path.join(audioDir, "asr");
-const asrBase = path.join(asrDir, "body");
 const timingsPath = path.join(audioDir, "body-timings.json");
 beginWorkflowStep(episodeDir, "timed", {
   dependencies: workflowDependencies,
@@ -134,31 +127,7 @@ const displayTitle = readEpisodeTitle(episodeDir, episodeName);
 const scriptValidation = validateBodyScript(rows, { episodeTitle: displayTitle });
 if (scriptValidation.errors.length) throw new Error(scriptValidation.errors.join("；"));
 
-fs.mkdirSync(asrDir, { recursive: true });
-// Only the book title as a hot-word prompt. A long Chinese initial prompt
-// (title + every script row) catastrophically biases whisper.cpp's decoder —
-// verified: it recognized only the final 2 lines of the 19-line voiceover.
-// A short prompt keeps recognition complete and still guides the title spelling.
-const whisperPrompt = episodeName;
-let whisperFailure = null;
-if (fs.existsSync(MODEL_PATH)) {
-  try {
-    run(
-      "whisper-cli",
-      ["-ng", "-m", MODEL_PATH, "-l", "zh", "-ojf", "-otxt", "--prompt", whisperPrompt, "-of", asrBase, voicePath],
-      { stdio: "inherit" },
-    );
-  } catch (error) {
-    whisperFailure = error;
-    console.warn(`Whisper unavailable; continuing without ASR text alignment: ${error.message}`);
-  }
-} else {
-  whisperFailure = new Error(`Missing Whisper model: ${MODEL_PATH}`);
-  console.warn(`${whisperFailure.message}; continuing without ASR text alignment`);
-}
-
 const duration = voiceover.duration;
-
 let speechSegments;
 let silenceFailure = null;
 try {
@@ -174,156 +143,37 @@ try {
   speechSegments = [{ start: 0, end: duration }];
   console.warn(`Silence detection unavailable; continuing with full audio duration: ${error.message}`);
 }
-let asr = { transcription: [] };
-if (!whisperFailure) {
-  try {
-    asr = JSON.parse(fs.readFileSync(`${asrBase}.json`, "utf8"));
-  } catch (error) {
-    whisperFailure = error;
-    console.warn(`Whisper output could not be read; continuing without ASR text alignment: ${error.message}`);
-  }
-}
-let captions;
-let skipLeading = 0;
-let alignment = {
-  method: "speech-duration-estimate",
-  speechSegments: speechSegments.length,
-  silenceDetectionAvailable: !silenceFailure,
-  contentCheck: "unavailable",
-  contentCheckReason: "Whisper text was not available; caption text remains script.csv and timing requires Agent review.",
-  requiresAgentReview: true,
-};
-let whisperAlignment = null;
-if (!whisperFailure) {
-  whisperAlignment = alignScriptToWhisper(rows, asr, { episodeTitle: displayTitle, audioDuration: duration });
-  const skipLeadingResult = deriveSkipLeadingSegments(speechSegments, whisperAlignment);
-  if (!skipLeadingResult.canDerive) {
-    throw new WorkflowError(
-      `Whisper detected spoken lead-in “${whisperAlignment.diagnostics.detectedLeadIn.text}”, but reliable timestamps for the greeting end and first book-title character are unavailable. The lead-in cannot be safely separated from script timing.`,
-      {
-        code: "voiceover_script_alignment_failed",
-        details: {
-          reason: "lead_in_token_timestamps_required",
-          scriptVersion,
-          alignment: whisperAlignment.diagnostics,
-          voiceover: path.relative(ROOT, voicePath),
-          whisperJson: fs.existsSync(`${asrBase}.json`) ? path.relative(ROOT, `${asrBase}.json`) : null,
-        },
-        nextActions: [
-          "Regenerate Whisper JSON with token offsets for the greeting end and first book-title character, then rerun timing generation.",
-          "If token offsets remain unavailable, inspect the audio and decide the lead-in boundary before proceeding.",
-        ],
-      },
-    );
-  }
-  skipLeading = skipLeadingResult.skipLeading;
-  if (whisperAlignment.textAvailable && !whisperAlignment.sequenceMappable) {
-    const differences = whisperAlignment.diagnostics.issues.map((issue) => issue.message).join(" ");
-    throw new WorkflowError(`Voiceover/script sequence mismatch; timing generation is blocked: ${differences}`, {
-      code: "voiceover_script_alignment_failed",
-      details: {
-        scriptVersion,
-        alignment: whisperAlignment.diagnostics,
-        voiceover: path.relative(ROOT, voicePath),
-        whisperJson: fs.existsSync(`${asrBase}.json`) ? path.relative(ROOT, `${asrBase}.json`) : null,
-      },
-      nextActions: [
-        "Review the listed missing, extra, or out-of-order speech against the voiceover.",
-        "Correct or replace the voiceover, then rerun timing generation after the script sequence can be mapped.",
-      ],
-    });
-  }
-  if (whisperAlignment.textAvailable && !whisperAlignment.contentValid) {
-    const differences = whisperAlignment.diagnostics.issues.map((issue) => issue.message).join(" ");
-    console.warn(`Whisper text differs from the approved script; mapping by script order and retaining script.csv as subtitle truth: ${differences}`);
-    whisperAlignment.diagnostics.requiresAgentReview = true;
-  }
-  if (
-    whisperAlignment.sequenceMappable
-    && whisperAlignment.timestampsAvailable
-    && whisperAlignment.captions.length === rows.length
-    && whisperAlignment.captions.every((caption) => Number.isFinite(caption.start) && Number.isFinite(caption.end))
-  ) {
-    captions = whisperAlignment.captions;
-    alignment = {
-      method: "whisper-token-script-alignment",
-      speechSegments: speechSegments.length,
-      silenceDetectionAvailable: !silenceFailure,
-      contentCheck: whisperAlignment.diagnostics.contentCheck,
-      requiresAgentReview: Boolean(whisperAlignment.diagnostics.requiresAgentReview),
-      scriptAlignment: whisperAlignment.diagnostics,
-    };
-    if (alignment.requiresAgentReview) {
-      console.warn("Whisper alignment passed with review notes; inspect the row text and available timing anchors before rendering.");
-    }
 
-    if (captions.length && speechSegments.length) {
-      const firstTokenStart = captions[0].start;
-      alignment.firstTokenToCaptionStartSeconds = Number.isFinite(whisperAlignment.firstScriptTokenTime)
-        ? Number(Math.abs(firstTokenStart - whisperAlignment.firstScriptTokenTime).toFixed(2))
-        : null;
-      const silenceSegmentIndex = speechSegments.findIndex((segment) =>
-        segment.start <= firstTokenStart + 0.15 && segment.end >= firstTokenStart - 0.15);
-      const silenceStart = silenceSegmentIndex >= 0 ? speechSegments[silenceSegmentIndex].start : null;
-      const firstCaptionDriftSeconds = silenceStart === null ? null : Number(Math.abs(firstTokenStart - silenceStart).toFixed(2));
-      alignment.firstCaptionDriftSeconds = firstCaptionDriftSeconds;
-      alignment.captionStartCrossCheckPassed = firstCaptionDriftSeconds !== null && firstCaptionDriftSeconds < 0.4;
-      if (!alignment.captionStartCrossCheckPassed) {
-        alignment.requiresAgentReview = true;
-        console.warn(
-          firstCaptionDriftSeconds === null
-            ? "Whisper/silence cross-check unavailable for caption #1; review the first caption start manually."
-          : `Caption #1 differs from the silencedetect boundary by ${firstCaptionDriftSeconds}s (limit 0.4s); review timing before rendering.`,
-        );
-      }
-    } else {
-      alignment.requiresAgentReview = true;
-      alignment.firstTokenToCaptionStartSeconds = captions.length
-        && Number.isFinite(whisperAlignment.firstScriptTokenTime)
-        ? Number(Math.abs(captions[0].start - whisperAlignment.firstScriptTokenTime).toFixed(2))
-        : null;
-      alignment.captionStartCrossCheckPassed = false;
-      console.warn("Whisper token alignment succeeded, but no silencedetect boundary was available to cross-check caption #1.");
-    }
-  } else {
-    const difference = whisperAlignment.diagnostics.issues.map((issue) => issue.message).join(" ");
-    console.warn(`Whisper/script alignment needs review; using duration-based fallback: ${difference}`);
-    alignment.contentCheck = whisperAlignment.textAvailable
-      ? whisperAlignment.diagnostics.contentCheck || "matched_with_timing_fallback"
-      : "unavailable";
-    alignment.contentCheckReason = whisperAlignment.textAvailable
-      ? "Whisper text was available, but token timestamps were not suitable for direct caption alignment."
-      : "Whisper returned no readable text; script content could not be checked against the audio.";
+// A single extra leading speech segment is a spoken opener (old habit: "今天分享
+// 的是" before the title). The shared intro template now owns that opener, so it
+// is skipped and the remaining segments map 1:1 to script rows.
+let mappedSegments = speechSegments;
+if (speechSegments.length === rows.length + 1) {
+  mappedSegments = speechSegments.slice(1);
+}
+
+let captions;
+let fallbackReason = null;
+let method = "silence-boundary";
+let requiresAgentReview = false;
+try {
+  const normalizedSegments = mappedSegments.length === rows.length
+    ? mappedSegments
+    : coalesceSpeechSegments(mappedSegments, rows.length);
+  captions = buildCaptionTimings(rows.map((row) => row.order), normalizedSegments);
+  if (mappedSegments.length !== rows.length) {
+    requiresAgentReview = true;
+    fallbackReason = `Found ${speechSegments.length} speech segments for ${rows.length} rows; coalesced or trimmed to row count.`;
+    console.warn(`[timing] ${fallbackReason}`);
   }
+} catch (error) {
+  captions = buildEstimatedCaptionTimings(rows, mappedSegments, duration);
+  method = "speech-duration-estimate";
+  fallbackReason = error.message;
+  requiresAgentReview = true;
+  console.warn(`[timing] Speech pauses were insufficient; continuing with duration estimate: ${error.message}`);
 }
-if (!captions) {
-  try {
-    const selectedSpeechSegments = speechSegments.slice(skipLeading);
-    const normalizedSegments = coalesceSpeechSegments(selectedSpeechSegments, rows.length);
-    captions = buildCaptionTimings(rows.map((row) => row.order), normalizedSegments);
-    alignment.method = "silence-segments";
-    alignment.fallbackReason = whisperFailure?.message
-      || whisperAlignment?.diagnostics.issues.map((issue) => issue.message).join(" ")
-      || "Whisper alignment did not yield caption timings.";
-  } catch (error) {
-    captions = buildEstimatedCaptionTimings(rows, speechSegments.slice(skipLeading), duration);
-    alignment.method = "speech-duration-estimate";
-    alignment.fallbackReason = error.message;
-    console.warn(`Speech pauses were insufficient; continuing with duration estimate: ${error.message}`);
-  }
-  alignment.silenceDetectionAvailable = !silenceFailure;
-  alignment.requiresAgentReview = true;
-  if (whisperAlignment) alignment.scriptAlignment = whisperAlignment.diagnostics;
-}
-alignment.asrAvailable = !whisperFailure;
-alignment.asrText = (asr.transcription || []).map((segment) => segment.text).join("");
-if (!whisperAlignment?.textAvailable) {
-  alignment.contentCheck = "unavailable";
-  alignment.contentCheckReason = whisperFailure
-    ? "Whisper could not provide readable transcript text."
-    : "Whisper returned no readable transcript text.";
-  alignment.requiresAgentReview = true;
-}
+
 if (!isFileFingerprintCurrent(scriptPath, scriptFingerprint)) {
   throw new WorkflowError("script.csv changed during timing generation; refusing to save timings for a different script snapshot.", {
     code: "script_changed_during_timing",
@@ -331,18 +181,25 @@ if (!isFileFingerprintCurrent(scriptPath, scriptFingerprint)) {
     nextActions: ["Review the current approved script, then rerun timing generation."],
   });
 }
+
+const alignment = {
+  method,
+  speechSegments: speechSegments.length,
+  silenceDetectionAvailable: !silenceFailure,
+  requiresAgentReview,
+  fallbackReason,
+};
 const timings = {
-    scriptVersion,
-    duration: Number(duration.toFixed(2)),
-    source: `script.csv subtitle truth with ${alignment.method}`,
-    audio: path.relative(ROOT, voicePath),
-    audioFingerprint: voiceover.fingerprint,
-    scriptFingerprint,
-    asr: fs.existsSync(`${asrBase}.json`) ? path.relative(ROOT, `${asrBase}.json`) : null,
-    skipLeadingSegments: skipLeading,
-    silence: { noise: options.noise, duration: Number(options.silenceDuration) },
-    alignment,
-    captions,
+  scriptVersion,
+  duration: Number(duration.toFixed(2)),
+  source: `script.csv subtitle truth with ${alignment.method}`,
+  audio: path.relative(ROOT, voicePath),
+  audioFingerprint: voiceover.fingerprint,
+  scriptFingerprint,
+  skipLeadingSegments: speechSegments.length === rows.length + 1 ? 1 : 0,
+  silence: { noise: options.noise, duration: Number(options.silenceDuration) },
+  alignment,
+  captions,
 };
 const temporaryTimingsPath = `${timingsPath}.${process.pid}.tmp`;
 const previousTimingsPath = `${timingsPath}.${process.pid}.previous`;
@@ -353,7 +210,7 @@ try {
   completeWorkflowStep(episodeDir, "timed", {
     dependencies: workflowDependencies,
     enforceDependencies: true,
-    quality: alignment.requiresAgentReview ? "degraded" : "pass",
+    quality: requiresAgentReview ? "degraded" : "pass",
   });
   fs.rmSync(previousTimingsPath, { force: true });
 } catch (error) {
@@ -368,5 +225,4 @@ try {
   fs.rmSync(previousTimingsPath, { force: true });
 }
 
-console.log(`ASR JSON: ${path.relative(ROOT, `${asrBase}.json`)}`);
-console.log(`Body timings: ${path.relative(ROOT, timingsPath)}`);
+console.log(`Body timings (${alignment.method}): ${path.relative(ROOT, timingsPath)}`);

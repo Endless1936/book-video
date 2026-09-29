@@ -91,8 +91,8 @@ try {
 }
 
 const modelPath = path.join(ROOT, "assets", "models", "whisper", "ggml-base.bin");
-if (!fs.existsSync(modelPath)) console.warn("Warning: Whisper model is not installed. Run node scripts/download-whisper-model.mjs before timing voiceover.");
+if (!fs.existsSync(modelPath)) console.warn("Warning: Whisper model is not installed. Run node scripts/download-whisper-model.mjs before checking TTS voiceover content.");
 if (run("whisper-cli", ["--version"], ROOT, { stdio: "ignore" }).status !== 0) {
-  console.warn("Warning: whisper-cli is not installed. Voiceover timing will not be available until it is installed.");
+  console.warn("Warning: whisper-cli is not installed. TTS content checking will not be available until it is installed (Jianying voiceover does not need it).");
 }
 console.log("book-video checks: ok");

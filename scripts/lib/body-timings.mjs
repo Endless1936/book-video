@@ -1,3 +1,6 @@
+// Timing is owned by FFmpeg silencedetect speech boundaries. Whisper is used
+// only to check that spoken content matches script.csv (TTS duplication or
+// garbling), never to supply timestamps.
 function roundSeconds(value) {
   return Number(Number(value).toFixed(2));
 }
@@ -11,6 +14,8 @@ export function parseSilenceEvents(output) {
   return events;
 }
 
+// Known spoken openers are tolerated as a leading extra segment (an old habit
+// or a TTS that adds one). Anything else before the script is garbled speech.
 const INTRO_PREFIXES = [
   "大家好",
   "今天分享的是",
@@ -31,9 +36,9 @@ const TRAD_TO_SIMP = {
   "討": "讨", "厭": "厌", "讓": "让", "說": "说", "話": "话", "課": "课", "題": "题",
   "麼": "么", "換": "换", "歡": "欢", "夠": "够", "眾": "众", "遠": "远", "這": "这",
   "終": "终", "於": "于", "氣": "气", "別": "别", "錯": "错", "滿": "满", "對": "对",
-  "從": "从", "個": "个", "對": "对", "後": "后", "來": "来", "時": "时", "為": "为",
-  "麼": "么", "還": "还", "過": "过", "請": "请", "謝": "谢", "見": "见", "認": "认",
-  "識": "识", "論": "论", "壞": "坏", "處": "处", "點": "点", "邊": "边", "題": "题",
+  "從": "从", "個": "个", "後": "后", "來": "来", "時": "时", "為": "为",
+  "還": "还", "過": "过", "請": "请", "謝": "谢", "見": "见", "認": "认",
+  "識": "识", "論": "论", "壞": "坏", "處": "处", "點": "点", "邊": "边",
 };
 function toSimplified(text) {
   return Array.from(text).map((ch) => TRAD_TO_SIMP[ch] || ch).join("");
@@ -63,92 +68,6 @@ function editDistance(leftText, rightText) {
   return previous[right.length];
 }
 
-function readOffsets(value) {
-  if (value == null) return { status: "missing" };
-  const rawFrom = value?.from;
-  const rawTo = value?.to;
-  if (rawFrom == null || rawTo == null) return { status: "invalid" };
-  const from = Number(value?.from);
-  const to = Number(value?.to);
-  if (!Number.isFinite(from) || !Number.isFinite(to) || from < 0 || to < from) {
-    return { status: "invalid" };
-  }
-  if (to === from) return { status: "zero-width" };
-  // whisper.cpp -ojf offsets are milliseconds.
-  return { status: "valid", start: from / 1000, end: to / 1000 };
-}
-
-function appendTimedText(target, value, offsets, metadata = {}) {
-  const characters = Array.from(normalizeSpeechText(value));
-  if (!characters.length) return;
-  const interval = offsets || { start: null, end: null };
-  characters.forEach((character, index) => {
-    const start = Number.isFinite(interval.start)
-      ? interval.start + ((interval.end - interval.start) * index) / characters.length
-      : null;
-    const end = Number.isFinite(interval.end)
-      ? interval.start + ((interval.end - interval.start) * (index + 1)) / characters.length
-      : null;
-    target.push({ character, start, end, ...metadata });
-  });
-}
-
-// Keep text for alignment when Whisper omits some token offsets; caption timing
-// uses the remaining real anchors per row and falls back when a row has none.
-export function flattenWhisperCharacters(asr) {
-  const characters = [];
-  let hasTokenTimestamps = true;
-  let usedSegmentFallback = false;
-  const segments = Array.isArray(asr?.transcription) ? asr.transcription : [];
-
-  segments.forEach((segment, segmentIndex) => {
-    const tokens = Array.isArray(segment?.tokens) ? segment.tokens : [];
-    if (tokens.length) {
-      for (const token of tokens) {
-        if (typeof token?.text === "string" && token.text.startsWith("[_")) continue; // Whisper control/timestamp tokens e.g. [_BEG_], [_TT_94]
-        const normalized = normalizeSpeechText(token?.text);
-        if (!normalized) continue; // Ignore punctuation and Whisper control tokens.
-        const offsets = readOffsets(token?.offsets);
-        if (offsets.status !== "valid") {
-          hasTokenTimestamps = false;
-          usedSegmentFallback = true;
-          // Keep text for sequence matching; zero-width times are unusable, not malformed.
-          appendTimedText(characters, token.text, null, {
-            segmentIndex,
-            timestampSource: offsets.status,
-          });
-          continue;
-        }
-        appendTimedText(characters, token.text, { start: offsets.start, end: offsets.end }, {
-          segmentIndex,
-          timestampSource: "token",
-        });
-      }
-    } else {
-      const normalized = normalizeSpeechText(segment?.text);
-      if (!normalized) return;
-      hasTokenTimestamps = false;
-      usedSegmentFallback = true;
-      const offsets = readOffsets(segment?.offsets);
-      appendTimedText(characters, segment.text,
-        offsets.status === "valid" ? { start: offsets.start, end: offsets.end } : null, {
-        segmentIndex,
-        timestampSource: offsets.status === "valid" ? "segment" : offsets.status,
-      });
-    }
-  });
-
-  // Keep real token timestamps distinct from missing values. Caption timing can
-  // fall back downstream; generated greeting splits need their own real anchors.
-  return {
-    characters,
-    hasTokenTimestamps,
-    usedSegmentFallback,
-    // Preserve the legacy meaning: token-level timing is incomplete; row-level real anchors may still be usable.
-    timelineEstimated: !hasTokenTimestamps,
-  };
-}
-
 function alignCharacterSequences(expected, recognized) {
   const rows = expected.length + 1;
   const columns = recognized.length + 1;
@@ -168,7 +87,7 @@ function alignCharacterSequences(expected, recognized) {
       const diagonalCost = costs[i - 1][j - 1] + (expected[i - 1].character === recognized[j - 1].character ? 0 : 1);
       const deleteCost = costs[i - 1][j] + 1;
       const insertCost = costs[i][j - 1] + 1;
-      // Stable tie breaking prefers preserving character-to-time matches.
+      // Stable tie breaking prefers preserving character-to-character matches.
       if (diagonalCost <= deleteCost && diagonalCost <= insertCost) {
         costs[i][j] = diagonalCost;
         directions[i][j] = 0;
@@ -237,217 +156,102 @@ function textAtIndexes(characters, indexes) {
   return indexes.map((index) => characters[index].character).join("");
 }
 
+function flattenSpeechText(asr) {
+  const segments = Array.isArray(asr?.transcription) ? asr.transcription : [];
+  const characters = [];
+  for (const segment of segments) {
+    const tokens = Array.isArray(segment?.tokens) ? segment.tokens : [];
+    const units = tokens.length ? tokens : [{ text: segment?.text }];
+    for (const unit of units) {
+      const text = String(unit?.text || "");
+      if (text.startsWith("[_")) continue; // Whisper control/timestamp tokens e.g. [_BEG_], [_TT_94]
+      const normalized = normalizeSpeechText(text);
+      if (!normalized) continue;
+      characters.push(...Array.from(normalized).map((character) => ({ character })));
+    }
+  }
+  return characters;
+}
+
 function likelyIntroPrefix(text) {
   const normalized = normalizeSpeechText(text);
   return INTRO_PREFIXES.some((prefix) => {
     const expected = normalizeSpeechText(prefix);
     // Treat only the complete unmatched prefix as an intro. `startsWith`
-    // would silently absorb extra speech (for example, a wrong book title)
-    // into an otherwise familiar greeting.
+    // would silently absorb extra speech (for example, a wrong book title).
     return editDistance(normalized, expected) <= 1;
   });
 }
 
-export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDuration = null } = {}) {
+// Whisper content check only: does the recognized text match script.csv well
+// enough to prove the TTS read the right lines, in order, without duplicating
+// or garbling them? It deliberately returns NO timestamps — timing comes from
+// silencedetect speech boundaries.
+export function checkScriptContent(rows, asr, { episodeTitle = "" } = {}) {
   const expected = rows.flatMap((row, rowIndex) => Array.from(normalizeSpeechText(row.text)).map((character) => ({
     character,
     rowIndex,
   })));
-  const flattened = flattenWhisperCharacters(asr);
-  const recognized = flattened.characters;
+  const recognized = flattenSpeechText(asr);
   const result = {
     ok: false,
     contentValid: false,
-    sequenceMappable: false,
     textAvailable: recognized.length > 0,
-    // Direct caption timing is available only when every script row has a real
-    // finite anchor. Missing token times are handled per row or by the caller's
-    // existing fallback; they are not themselves out-of-range timestamps.
-    timestampsAvailable: false,
-    timelineEstimated: flattened.timelineEstimated === true,
-    usedSegmentFallback: flattened.usedSegmentFallback,
-    captions: [],
-    firstScriptTokenTime: null,
-    firstScriptTokenOffsetAvailable: false,
+    recognizedText: recognized.map((item) => item.character).join(""),
     diagnostics: {
       scriptRows: rows.length,
       scriptCharacters: expected.length,
       recognizedCharacters: recognized.length,
-      recognizedText: recognized.map((item) => item.character).join(""),
       issues: [],
       rows: [],
+      detectedLeadIn: null,
     },
   };
 
-  const finiteAudioDuration = Number.isFinite(Number(audioDuration)) && Number(audioDuration) > 0
-    ? Number(audioDuration)
-    : null;
-  if (finiteAudioDuration !== null) {
-    result.diagnostics.audioDurationSeconds = roundSeconds(finiteAudioDuration);
-    result.diagnostics.audioBoundaryToleranceSeconds = 0.1;
-  }
-
-  // Missing offsets are absent evidence, not timestamps that run backwards.
-  let previousTimedStart = null;
-  let tokensMonotonic = true;
-  for (const item of recognized) {
-    if (!Number.isFinite(item.start) || !Number.isFinite(item.end)) continue;
-    if (previousTimedStart !== null && item.start < previousTimedStart - 0.03) {
-      tokensMonotonic = false;
-      break;
-    }
-    previousTimedStart = item.start;
-  }
-  if (!tokensMonotonic) {
-    result.diagnostics.issues.push({
-      code: "non_monotonic_token_offsets",
-      message: "Whisper token offsets go backwards in audio time; timestamp alignment cannot be trusted.",
-    });
-  }
-
-  // Whisper sometimes reports an end a fraction of a second past the audio
-  // duration (e.g. 26.20s on a 26.04s file). Clamp mild overshoot (<=1s) back
-  // into range instead of failing the whole timeline; severe overshoot still
-  // fails below.
-  const rawOutOfRangeCharacters = finiteAudioDuration === null ? [] : recognized.filter((item) =>
-    Number.isFinite(item.start) && Number.isFinite(item.end)
-    && (item.start < 0 || item.start >= finiteAudioDuration || item.end <= 0 || item.end > finiteAudioDuration + 0.1));
-  if (finiteAudioDuration !== null) {
-    for (const item of recognized) {
-      if (!Number.isFinite(item.start) || !Number.isFinite(item.end)) continue;
-      if (item.end > finiteAudioDuration && item.end <= finiteAudioDuration + 1) {
-        item.end = finiteAudioDuration;
-      }
-      if (item.start >= finiteAudioDuration && item.start <= finiteAudioDuration + 1) {
-        item.start = Math.max(0, finiteAudioDuration - 0.05);
-      }
-      if (item.end <= 0 && item.end >= -1) item.end = 0.05;
-    }
-  }
-
-  const outOfRangeCharacters = finiteAudioDuration === null ? [] : recognized.filter((item) =>
-    Number.isFinite(item.start)
-    && Number.isFinite(item.end)
-    && (item.start < 0
-    || item.start >= finiteAudioDuration
-    || item.end <= 0
-    || item.end > finiteAudioDuration + 0.1));
-  if (outOfRangeCharacters.length) {
-    result.diagnostics.issues.push({
-      code: "whisper_offsets_out_of_audio_range",
-      message: `${outOfRangeCharacters.length} Whisper character timestamp(s) fall outside the ${finiteAudioDuration.toFixed(2)}s audio duration (0.1s end tolerance).`,
-      count: outOfRangeCharacters.length,
-      first: {
-        text: outOfRangeCharacters.slice(0, 12).map((item) => item.character).join(""),
-        start: outOfRangeCharacters[0].start,
-        end: outOfRangeCharacters[0].end,
-      },
-    });
-  } else if (rawOutOfRangeCharacters.length) {
-    // Mild overshoot was clamped; record it as a review note, not a hard failure.
-    result.diagnostics.issues.push({
-      code: "whisper_offsets_clamped",
-      message: `${rawOutOfRangeCharacters.length} Whisper character timestamp(s) were clamped to the ${finiteAudioDuration.toFixed(2)}s audio duration (mild overshoot).`,
-      count: rawOutOfRangeCharacters.length,
-    });
-  }
-
-  if (!expected.length) result.diagnostics.issues.push({ code: "empty_script", message: "No readable script characters were provided." });
-  if (!recognized.length) result.diagnostics.issues.push({ code: "empty_whisper_text", message: "Whisper returned no readable speech tokens." });
-  if (!flattened.hasTokenTimestamps) {
-    result.diagnostics.issues.push({
-      code: "token_timestamps_missing",
-      message: "Whisper did not provide usable token-level times for every recognized unit; exact timing may need fallback.",
-    });
-  }
-  const invalidOffsetCharacters = recognized.filter((item) => item.timestampSource === "invalid");
-  if (invalidOffsetCharacters.length) {
-    result.diagnostics.issues.push({
-      code: "invalid_token_offsets",
-      message: `${invalidOffsetCharacters.length} recognized character(s) have malformed Whisper offsets.from/to values.`,
-      count: invalidOffsetCharacters.length,
-    });
-  }
-  const zeroWidthOffsetCharacters = recognized.filter((item) => item.timestampSource === "zero-width");
-  if (zeroWidthOffsetCharacters.length) {
-    result.diagnostics.issues.push({
-      code: "zero_width_token_offsets",
-      message: `${zeroWidthOffsetCharacters.length} recognized character(s) have zero-width Whisper offsets (from == to); these are unusable anchors, not malformed timestamps.`,
-      count: zeroWidthOffsetCharacters.length,
-    });
-  }
-  if (!expected.length || !recognized.length) {
+  if (!expected.length) {
+    result.diagnostics.issues.push({ code: "empty_script", message: "No readable script characters were provided." });
     result.diagnostics.contentCheck = "unavailable";
-    result.diagnostics.contentCheckReason = !recognized.length ? "Whisper returned no readable text." : "The script has no readable text.";
+    result.diagnostics.contentCheckReason = "The script has no readable text.";
+    return result;
+  }
+  if (!recognized.length) {
+    result.diagnostics.issues.push({ code: "empty_whisper_text", message: "Whisper returned no readable speech tokens." });
+    result.diagnostics.contentCheck = "unavailable";
+    result.diagnostics.contentCheckReason = "Whisper returned no readable text.";
     return result;
   }
 
+  // Tolerate a known spoken opener ("今天分享的是" etc.) as a leading segment;
+  // timing handles it separately via the extra speech segment. Anything else
+  // before the script is garbled speech.
   let aligned = alignCharacterSequences(expected, recognized);
   let alignmentOffset = 0;
   let alignmentIntroDistance = Number.POSITIVE_INFINITY;
-  let alignmentIntroLengthDelta = Number.POSITIVE_INFINITY;
-  const title = normalizeSpeechText(episodeTitle);
-  const recognizedText = recognized.map((item) => item.character).join("");
-  // If a known spoken opener also appears at the start of the script, prefer
-  // the later body occurrence only when it produces a strictly better match.
   for (const intro of INTRO_PREFIXES.map(normalizeSpeechText).sort((left, right) => right.length - left.length)) {
     if (!intro) continue;
-    if (title.length >= 2 && intro.includes(title)) continue;
     const expectedIntroLength = Array.from(intro).length;
     for (let candidateOffset = Math.max(1, expectedIntroLength - 2); candidateOffset <= expectedIntroLength + 2; candidateOffset += 1) {
       if (candidateOffset >= recognized.length) continue;
-      const prefixDistance = editDistance(normalizeSpeechText(recognizedText.slice(0, candidateOffset)), intro);
+      const prefixDistance = editDistance(normalizeSpeechText(result.recognizedText.slice(0, candidateOffset)), intro);
       if (prefixDistance > 1) continue;
       const candidate = alignCharacterSequences(expected, recognized.slice(candidateOffset));
-      const introLengthDelta = Math.abs(candidateOffset - expectedIntroLength);
-      if (
-        candidate.cost < aligned.cost
-        || (
-          candidate.cost === aligned.cost
-          && (
-            prefixDistance < alignmentIntroDistance
-            || (prefixDistance === alignmentIntroDistance && introLengthDelta < alignmentIntroLengthDelta)
-          )
-        )
-      ) {
+      if (candidate.cost < aligned.cost || (candidate.cost === aligned.cost && prefixDistance < alignmentIntroDistance)) {
         aligned = candidate;
         alignmentOffset = candidateOffset;
         alignmentIntroDistance = prefixDistance;
-        alignmentIntroLengthDelta = introLengthDelta;
       }
     }
   }
+
   const localPrefixIndexes = aligned.prefixIndexes.map((index) => index + alignmentOffset);
   const suffixIndexes = aligned.suffixIndexes.map((index) => index + alignmentOffset);
   const prefixIndexes = [...Array.from({ length: alignmentOffset }, (_, index) => index), ...localPrefixIndexes];
   const prefixText = textAtIndexes(recognized, prefixIndexes);
   const suffixText = textAtIndexes(recognized, suffixIndexes);
   const internalExtraText = textAtIndexes(recognized, aligned.internalExtraIndexes.map((index) => index + alignmentOffset));
-  const firstExpectedTitleIndex = expected.findIndex((item) => item.rowIndex === 0);
-  const firstMappedTitleCharacter = [...aligned.expectedToRecognized.entries()]
-    .filter(([expectedIndex]) => expected[expectedIndex]?.rowIndex === 0)
-    .sort(([left], [right]) => left - right)[0];
-  const firstScriptIndex = aligned.expectedToRecognized.get(firstExpectedTitleIndex);
-  const firstRecognizedIndex = Number.isInteger(firstScriptIndex) ? firstScriptIndex + alignmentOffset : null;
-
-  // A generated split needs the first expected title character itself. If Whisper
-  // drops it, using the next character could cut off the spoken title opening.
-  const firstScript = firstRecognizedIndex === null ? null : recognized[firstRecognizedIndex];
-  if (firstScript?.timestampSource === "token" && Number.isFinite(firstScript.start)) {
-    result.firstScriptTokenTime = firstScript.start;
-    result.firstScriptTokenOffsetAvailable = true;
-    result.diagnostics.firstMappedTitleCharacter = firstMappedTitleCharacter?.[0] ?? 0;
-  } else if (firstExpectedTitleIndex >= 0 && !Number.isInteger(firstScriptIndex)) {
-    result.diagnostics.titleStartAnchorUnavailable = true;
-  }
+  const title = normalizeSpeechText(episodeTitle);
 
   if (prefixText) {
-    const prefixChars = prefixIndexes.map((index) => recognized[index]);
-    const timedPrefixChars = prefixChars.filter((item) => item.timestampSource === "token"
-      && Number.isFinite(item.start) && Number.isFinite(item.end));
-    const prefixDuration = timedPrefixChars.length
-      ? Math.max(...timedPrefixChars.map((item) => item.end)) - Math.min(...timedPrefixChars.map((item) => item.start))
-      : Number.POSITIVE_INFINITY;
     const containsTitle = title.length >= 2 && prefixText.includes(title);
     if (containsTitle) {
       result.diagnostics.issues.push({
@@ -455,23 +259,14 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
         message: `Whisper detected the book title before the approved script: “${prefixText}”.`,
         text: prefixText,
       });
-    } else if (!likelyIntroPrefix(prefixText) || prefixChars.length > 36
-      || (Number.isFinite(prefixDuration) && prefixDuration > 4)) {
+    } else if (likelyIntroPrefix(prefixText) && prefixIndexes.length <= 12) {
+      result.diagnostics.detectedLeadIn = { text: prefixText };
+    } else {
       result.diagnostics.issues.push({
         code: "unexpected_leading_speech",
         message: `Unmatched speech precedes the script: “${prefixText}”.`,
         text: prefixText,
       });
-    } else {
-      result.diagnostics.detectedLeadIn = {
-        text: prefixText,
-        tokenOffsetsAvailable: prefixChars.at(-1)?.timestampSource === "token"
-          && Number.isFinite(prefixChars.at(-1)?.end),
-        start: prefixChars.find((item) => item.timestampSource === "token" && Number.isFinite(item.start))?.start ?? null,
-        end: prefixChars.at(-1)?.timestampSource === "token" && Number.isFinite(prefixChars.at(-1)?.end)
-          ? prefixChars.at(-1).end
-          : null,
-      };
     }
   }
   if (suffixText) {
@@ -491,14 +286,10 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
       recognized: recognized[recognizedIndex + alignmentOffset],
     });
   }
-  const timedMappingsByRow = mappedByRow.map((mappings) => mappings
-    .filter(({ recognized: item }) => Number.isFinite(item.start) && Number.isFinite(item.end))
-    .sort((left, right) => left.recognized.start - right.recognized.start));
   let totalMatched = 0;
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const expectedCount = expected.filter((item) => item.rowIndex === rowIndex).length;
     const mappings = mappedByRow[rowIndex];
-    const timedMappings = timedMappingsByRow[rowIndex];
     const recognizedIndexes = [...aligned.expectedToRecognized]
       .filter(([expectedIndex]) => expected[expectedIndex].rowIndex === rowIndex)
       .map(([, recognizedIndex]) => recognizedIndex + alignmentOffset);
@@ -530,17 +321,10 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
       maxToleratedEditDistance: maxRowEditDistance,
       exactAnchors,
       exact: rowCoverage === 1 && rowMismatches === 0 && rowRecognizedText === expectedText,
-      timestampStart: timedMappings[0]?.recognized.start ?? null,
-      timestampEnd: timedMappings.at(-1)?.recognized.end ?? null,
     });
-    const anchoredShortRowWithOneOmission = expectedCount <= 4
-      && matchedCount > 0
-      && exactAnchors > 0
-      && rowEditDistance === 1
-      && rowRecognizedText.length === expectedCount - 1;
     if (
       matchedCount < Math.min(1, expectedCount)
-      || (rowCoverage < 0.6 && !anchoredShortRowWithOneOmission)
+      || (rowCoverage < 0.6 && !(expectedCount <= 4 && matchedCount > 0 && exactAnchors > 0 && rowEditDistance === 1 && rowRecognizedText.length === expectedCount - 1))
     ) {
       result.diagnostics.issues.push({
         code: "script_row_missing_or_mismatched",
@@ -548,19 +332,16 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
         message: `Script row ${rows[rowIndex].order} has only ${matchedCount}/${expectedCount} characters aligned to speech.`,
       });
     }
-
-    if (matchedCount > 0 && (exactAnchors === 0 || rowEditDistance > maxRowEditDistance)) {
+    if (matchedCount > 0 && rowEditDistance > maxRowEditDistance && rowCoverage < 1) {
       result.diagnostics.issues.push({
         code: isTitleRow ? "script_title_mismatch" : "script_row_text_mismatch",
         order: Number(rows[rowIndex].order),
-        message: `Whisper text for script row ${rows[rowIndex].order} is not close enough to its approved text: “${rowRecognizedText}” (edit distance ${rowEditDistance}/${expectedCount}; ${exactAnchors} exact anchors).`,
+        message: `Whisper text for script row ${rows[rowIndex].order} is not close enough to its approved text: “${rowRecognizedText}” (edit distance ${rowEditDistance}/${expectedCount}).`,
         expectedText,
         recognizedText: rowRecognizedText,
         editDistance: rowEditDistance,
-        exactAnchors,
       });
     }
-
     if (matchedCount > 0 && rowEditDistance > 0) {
       const reorderedMatch = normalizedRows
         .map((candidateText, candidateIndex) => ({
@@ -589,100 +370,54 @@ export function alignScriptToWhisper(rows, asr, { episodeTitle = "", audioDurati
     }
   }
 
-  const reviewEditDistance = Math.max(2, Math.floor(expected.length * 0.04));
-  const maxEditDistance = Math.max(6, Math.floor(expected.length * 0.18));
-  result.diagnostics.editDistance = aligned.cost + alignmentOffset;
-  result.diagnostics.reviewEditDistance = reviewEditDistance;
-  result.diagnostics.maxToleratedEditDistance = maxEditDistance;
-  result.diagnostics.substitutions = aligned.substitutions;
-  result.diagnostics.missingCharacters = aligned.missingCharacters;
-  result.diagnostics.extraCharacters = aligned.extraCharacters + alignmentOffset;
-  const effectiveEditDistance = Math.max(0, aligned.cost - aligned.prefixIndexes.length - aligned.suffixIndexes.length);
-  result.diagnostics.effectiveEditDistance = effectiveEditDistance;
-  result.diagnostics.contentCheck = "matched";
-  result.diagnostics.requiresAgentReview = effectiveEditDistance > 0
-    || effectiveEditDistance > reviewEditDistance
-    || result.diagnostics.rows.some((row) => !row.exact)
-    || !flattened.hasTokenTimestamps
-    || invalidOffsetCharacters.length > 0
-    || rawOutOfRangeCharacters.length > 0;
-  if (result.diagnostics.requiresAgentReview) {
-    result.diagnostics.contentCheck = "matched_with_asr_variance";
+  if (internalExtraText.length > 2) {
+    result.diagnostics.issues.push({
+      code: "unexpected_internal_speech",
+      message: `Whisper detected extra speech inside the script sequence: “${internalExtraText}”.`,
+      text: internalExtraText,
+    });
   }
+
+  const maxEditDistance = Math.max(6, Math.floor(expected.length * 0.18));
+  const effectiveEditDistance = Math.max(0, aligned.cost - aligned.prefixIndexes.length - aligned.suffixIndexes.length);
+  result.diagnostics.editDistance = aligned.cost + alignmentOffset;
+  result.diagnostics.effectiveEditDistance = effectiveEditDistance;
+  result.diagnostics.maxToleratedEditDistance = maxEditDistance;
   if (effectiveEditDistance > maxEditDistance) {
     result.diagnostics.issues.push({
       code: "script_text_mismatch",
       message: `Whisper/script edit distance ${effectiveEditDistance} exceeds the content alignment limit ${maxEditDistance}.`,
     });
   }
-  if (internalExtraText) {
-    result.diagnostics.internalExtraText = internalExtraText;
-    if (internalExtraText.length > 2) {
-      result.diagnostics.issues.push({
-        code: "unexpected_internal_speech",
-        message: `Whisper detected extra speech inside the script sequence: “${internalExtraText}”.`,
-        text: internalExtraText,
-      });
-    }
-  }
 
-  const timestampIssueCodes = new Set([
-    "token_timestamps_missing",
-    "invalid_token_offsets",
-    "zero_width_token_offsets",
-    "non_monotonic_token_offsets",
-    "whisper_offsets_out_of_audio_range",
-    "whisper_offsets_clamped",
-  ]);
-  const reviewableTextIssueCodes = new Set([
-    "script_title_mismatch",
+  // Only duplication or garbling is a hard block. A row may read slightly
+  // differently because of ASR variance; that is reviewable, not blocking.
+  const blockingCodes = new Set([
+    "script_row_missing_or_mismatched",
     "script_row_text_mismatch",
+    "script_title_mismatch",
+    "script_row_order_mismatch",
     "script_text_mismatch",
+    "unexpected_leading_speech",
+    "leading_title_before_script",
+    "unexpected_trailing_speech",
+    "unexpected_internal_speech",
   ]);
-  const unusableTimestampIssueCodes = new Set([
-    "non_monotonic_token_offsets",
-    "whisper_offsets_out_of_audio_range",
-  ]);
-  result.timestampsAvailable = timedMappingsByRow.every((mappings) => mappings.length > 0)
-    && !result.diagnostics.issues.some((issue) => unusableTimestampIssueCodes.has(issue.code));
-  result.contentValid = result.diagnostics.issues.every((issue) => timestampIssueCodes.has(issue.code));
-  result.sequenceMappable = result.diagnostics.issues.every((issue) =>
-    timestampIssueCodes.has(issue.code) || reviewableTextIssueCodes.has(issue.code));
+  const blockingIssues = result.diagnostics.issues.filter((issue) => blockingCodes.has(issue.code));
+  result.contentValid = blockingIssues.length === 0;
   result.ok = result.diagnostics.issues.length === 0;
-  if (result.timestampsAvailable && totalMatched > 0) {
-    result.captions = rows.map((row, rowIndex) => {
-      const mappings = timedMappingsByRow[rowIndex];
-      const rawStart = mappings[0]?.recognized.start;
-      const rawEnd = mappings.at(-1)?.recognized.end;
-      const start = finiteAudioDuration === null
-        ? rawStart
-        : Math.min(finiteAudioDuration, Math.max(0, rawStart));
-      const end = finiteAudioDuration === null
-        ? Math.max(start + 0.08, rawEnd)
-        : Math.min(finiteAudioDuration, Math.max(start + 0.08, rawEnd));
-      return {
-        order: Number(row.order),
-        start: roundSeconds(start),
-        end: roundSeconds(end),
-      };
-    });
+  result.diagnostics.requiresAgentReview = result.diagnostics.rows.some((row) => !row.exact)
+    || result.diagnostics.issues.length > 0;
+  result.diagnostics.contentCheck = blockingIssues.length
+    ? "blocked"
+    : (result.diagnostics.requiresAgentReview ? "matched_with_asr_variance" : "matched");
+  if (blockingIssues.length) {
+    result.diagnostics.blockingIssues = blockingIssues;
   }
   return result;
 }
 
-export function deriveSkipLeadingSegments(speechSegments, alignment) {
-  const leadIn = alignment?.diagnostics?.detectedLeadIn;
-  if (!leadIn) return { canDerive: true, skipLeading: 0 };
-  const hasReliableTokenOffsets = alignment.firstScriptTokenOffsetAvailable
-    && leadIn.tokenOffsetsAvailable;
-  if (!hasReliableTokenOffsets || !Number.isFinite(alignment.firstScriptTokenTime)) {
-    return { canDerive: false, skipLeading: 0 };
-  }
-  return {
-    canDerive: true,
-    skipLeading: speechSegments.filter((segment) => segment.end <= alignment.firstScriptTokenTime + 0.02).length,
-  };
-}
+// --- Silence-boundary timing (the only timing source) ---
 
 export function buildSpeechSegments(duration, events) {
   const segments = [];
