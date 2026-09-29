@@ -133,6 +133,11 @@ function createIntro(brief) {
       .replaceAll(`{{LIST_AUTHOR_${index + 1}}}`, `${book.author} / 著`);
   });
   fs.writeFileSync(path.join(introDir, "index.html"), html);
+  fs.mkdirSync(path.join(introDir, "fonts"), { recursive: true });
+  copyFile(
+    path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "SmileySans-Oblique.ttf"),
+    path.join(introDir, "fonts", "SmileySans-Oblique.ttf"),
+  );
   copyFile(path.join(imagesDir, "result-bridge.png"), path.join(introDir, "media", "pages", "result.png"));
 }
 
@@ -179,6 +184,15 @@ function createBody(brief, rows, audioTimings) {
   copyFile(path.join(imagesDir, "atmosphere-1.png"), path.join(bodyDir, "media", "01-atmosphere.png"));
   copyFile(path.join(imagesDir, "atmosphere-2.png"), path.join(bodyDir, "media", "02-atmosphere.png"));
   copyFile(path.join(imagesDir, "atmosphere-3.png"), path.join(bodyDir, "media", "03-atmosphere.png"));
+  fs.mkdirSync(path.join(bodyDir, "fonts"), { recursive: true });
+  copyFile(
+    path.join(ROOT, "templates", "shared-video-template", "body", "fonts", "SmileySans-Oblique.ttf"),
+    path.join(bodyDir, "fonts", "SmileySans-Oblique.ttf"),
+  );
+
+  // The book title (order 1) is already shown as the big top title card;
+  // do NOT repeat it as a bottom subtitle.
+  const captionRows = rows.filter((row) => Number(row.order) !== 1);
 
   const estimatedByOrder = audioTimings?.duration && audioTimings.byOrder.size === 0
     ? new Map(buildEstimatedCaptionTimings(
@@ -189,7 +203,7 @@ function createBody(brief, rows, audioTimings) {
     ).map((item) => [item.order, item]))
     : new Map();
   let cursor = audioTimings?.duration ? FALLBACK_CAPTION_START : 0.72;
-  const speechTimings = rows.map((row) => {
+  const speechTimings = captionRows.map((row) => {
     const order = Number(row.order);
     const audioTiming = audioTimings?.byOrder.get(order) || estimatedByOrder.get(order);
     const start = Number(audioTiming?.start);
@@ -225,7 +239,7 @@ function createBody(brief, rows, audioTimings) {
   const sceneTwo = Number((safeDuration * 0.34).toFixed(2));
   const sceneThree = Number((safeDuration * 0.67).toFixed(2));
 
-  const captionHtml = rows
+  const captionHtml = captionRows
     .map((row) => {
       const small = row.text.length >= 9 ? " small" : "";
       return `      <div class="caption c${row.order}${small}"><span>${wrapCaptionText(row.text)}</span></div>`;
@@ -244,12 +258,10 @@ function createBody(brief, rows, audioTimings) {
     <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
     <style>
       * { box-sizing: border-box; }
-      @font-face { font-family: "DeYiHei"; src: local("DeYiHei"), local("DeYi Hei"), local("德意黑"); }
-      @font-face { font-family: "德意黑"; src: local("德意黑"), local("DeYiHei"), local("DeYi Hei"); }
-      @font-face { font-family: "STHeiti"; src: local("STHeiti"), local("STHeitiSC-Medium"); }
-      @font-face { font-family: "Hiragino Sans GB"; src: local("Hiragino Sans GB"); }
+      @font-face { font-family: "Smiley Sans"; src: url("fonts/SmileySans-Oblique.ttf") format("truetype"); font-weight: 900; font-display: block; }
+      @font-face { font-family: "Noto Sans CJK SC"; src: local("Noto Sans CJK SC"); }
       html, body { width: 720px; height: 960px; margin: 0; overflow: hidden; background: #000; }
-      body { font-family: "DeYiHei", "德意黑", "STHeiti", "Hiragino Sans GB", sans-serif; color: #fff; }
+      body { font-family: "Smiley Sans", "Noto Sans CJK SC", sans-serif; color: #fff; }
       #root { position: relative; width: 720px; height: 960px; overflow: hidden; background: #000; }
       .scene { position: absolute; inset: 0; opacity: 0; overflow: hidden; }
       .scene:first-of-type { opacity: 1; }

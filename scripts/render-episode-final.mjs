@@ -375,8 +375,6 @@ const report = buildProductionReport({
   })),
   audioInputs: {
     introVoice: fs.existsSync(introVoice),
-    introVoiceSource,
-    introVoicePath: path.relative(ROOT, introVoice),
     bodyVoice: fs.existsSync(bodyVoice),
     bgm: fs.existsSync(bgmPath),
     gearSfx: fs.existsSync(INTRO_SCROLL_SFX_PATH),
@@ -386,6 +384,10 @@ const report = buildProductionReport({
     bgm: {
       path: path.relative(ROOT, bgmPath),
       fingerprint: fingerprintFile(bgmPath),
+    },
+    introVoice: {
+      source: introVoiceSource,
+      path: path.relative(ROOT, introVoice),
     },
   },
   allowOver60Seconds: ALLOW_OVER_60_SECONDS,
