@@ -71,6 +71,8 @@ If the user explicitly requests fully automatic production, the script approval 
 
 ## Script Rules
 
+`script.csv` rows are the approved subtitle truth AND the alignment contract: each row must be ONE complete spoken unit — a short, standalone sentence with NO internal comma/period/question-mark pause — because silence boundaries treat each pause-separated speech segment as exactly one subtitle. A row with internal punctuation gets split into multiple segments by silencedetect, breaking the segment-count == row-count check and degrading alignment. Keep rows short (roughly 4-14 characters); the renderer may visually wrap a row internally but never relies on punctuation inside a row. Never rewrite approved script wording; if wording must change, get the new version approved first and keep one active version.
+
 When the content check marks the first, book-title row as non-exact, treat it as a possible Whisper error and inspect the corresponding voice audio before accepting or rendering it. If the audio does not clearly confirm the approved title, stop and ask the user; keep the approved script as subtitle text.
 
 Read `docs/book-video-playbook.md` before drafting, and study all three scripts and their analysis in `assets/reference-videos/文案与共鸣分析.md`. Borrow the emotional hook, focused escalation, self-projecting lines, and the way the book voices the viewer; do not reuse the original wording. The first line must immediately create resonance. Use short, natural lines and concrete scenes. Let the book support the viewer's emotion instead of becoming an academic summary. Avoid “你是不是”, “不是……而是……” formulas, mechanical parallelism, arrogant instruction, and CTA language. End with emotional aftertaste.
