@@ -7,8 +7,8 @@
 1. 初始化：Agent 先定位当前仓库根目录并运行 `node scripts/init.mjs`，一次性检查 Codex 的 HyperFrames/imagegen 能力、Node.js、FFmpeg、`whisper-cli` 和 Whisper 模型。不要根据 FFmpeg/FFprobe 的版本输出首行判断是否安装，统一以检查命令退出状态为准。缺少本机运行时依赖时集中说明并征得一次同意，再负责安装。模型按文件大小确认，不用目录列表判断。HyperFrames 首次使用可能需要 npm registry；网络被拦截时，Agent 直接通过执行工具申请网络权限并自动重试，不重复询问用户。微信读书 Skill 自动安装启用；只有初始化结果明确显示缺少 API Key 时才询问一次是否连接。用户同意后，Agent 必须通过浏览器/电脑工具打开[微信读书 Skills 官网](https://weread.qq.com/r/weread-skills)并协助完成登录后的取 Key 流程；用户自行完成登录、二维码/验证码或 CAPTCHA，Agent 不索要密码、验证码或 Cookie。若当前工具能安全读取并直写本地 `.env`，按 `0600` 保存且不在聊天、日志或命令参数中暴露；否则让用户在本地 TTY 运行 `node scripts/init.mjs --configure-weread`，把 Key 输入隐藏提示，不让用户贴到聊天。遇到页面或浏览器问题时，说明具体卡点并请用户接手该步骤。配置后重跑普通 `node scripts/init.mjs` 确认 `wereadApiKey: true`；用户拒绝则继续使用公开资料。已显示 `weread: enabled` 时不得重复询问。
 2. 选书：读取本地候选池；没有候选时先询问偏好，再搜索候选书。微信读书 Skill 已安装且可用时，优先灵活使用它获取书籍详情、评分、热门划线和公开书评；没有有效结果时再补充公开资料或用户提供的信息。搜索结果必须先全量写入本地 `data/book-pipeline.csv`，再从已记录的书目中选择五本并标出首选。
 3. 书目确认：确认书名、作者、版本和 `display_title`。
-4. 文案确认：先阅读书籍元数据、热门划线和公开书评等可用研究材料；再通读 `assets/reference-videos/文案与共鸣分析.md` 中三篇口播及分析，参考情绪钩子、单一痛点递进、可自我投射的句子和图书承接方式，只借鉴写法、不复用原句。微信读书内容用于提炼情绪入口和事实背景，不直接复制长段落或整篇书评。文案在消息中用一个 Markdown 代码块完整展示可配音内容。代码块第一行写 `《书名》`，后面紧接全部朗读正文，不加入 CSV 字段、序号、作者标签、时间戳或解释；`script.csv` 的 `order=1` 也必须是该书名，后续每一行都是要念出的正文和字幕。用户应能一次性复制代码块到剪映生成音频。同时保存为机器处理真源，等待用户确认后再继续。
-   文案长度：推荐总计 18–20 行（含书名），硬上限 22 行（含书名）；`script.csv` 最多 22 行（含书名），正文最多 21 行、约 220 个汉字。标题行须与 `brief.json` 的 `display_title` 一致。文案写入临时 `script.csv` 后，必须先运行 `node scripts/validate-script.mjs "<book>"`；未通过时由 Agent 内部缩短，不能先发给用户确认，也不能等到配音或最终渲染阶段才处理。
+4. 文案确认：先阅读书籍元数据、热门划线和公开书评等可用研究材料；再通读 `assets/reference-videos/文案与共鸣分析.md` 中三篇口播及分析，参考情绪钩子、单一痛点递进、可自我投射的句子和图书承接方式，只借鉴写法、不复用原句。微信读书内容用于提炼情绪入口和事实背景，不直接复制长段落或整篇书评。文案在消息中用一个 Markdown 代码块完整展示可配音内容。代码块第一行写 `《书名》`，后面紧接全部朗读正文，不加入 CSV 字段、序号、作者标签、时间戳或解释；`script.csv` 的 `order=1` 也必须是该书名，后续每一行是一段简短、自然的正文字幕。每行都要念出；书名只在画面顶部显示，不重复做底部字幕。用户应能一次性复制代码块到剪映生成音频。同时保存为机器处理真源，等待用户确认后再继续。
+   正文按自然口播节奏拆成简短字幕片段：长句按语义和停顿拆开，相邻过短的片段可以合并。正文字幕不带标点或空白，渲染器不负责按标点二次拆分。最多 21 行正文（连同书名共 22 行），约 220 个汉字。标题行须与 `brief.json` 的 `display_title` 一致。文案写入临时 `script.csv` 后，必须先运行 `node scripts/validate-script.mjs "<book>"`；未通过时由 Agent 内部缩短，不能先发给用户确认，也不能等到配音或最终渲染阶段才处理。
 5. 图片制作：确认后生成一张独立的结果桥接图；正文氛围图数量按 `ceil(正文行数 / 5)` 计算，每张依次覆盖正文中的一个 3-5 行场景。DP 根据旁白停顿与时长平衡场景边界；每个场景使用独立氛围图，不复用图片。
 6. 声线与口播：声线映射见 `assets/template-audio/voice-profiles.json`；默认 `soft-male`（柔和男声），可在 `brief.json` 中设 `voice_profile: "hong-kong-male"` 选择港风男声。配音前确定声线；之后若切换声线，须重新导出或生成口播。克隆使用所选声线的 10 秒 reference，开场使用同一声线的 intro。仅当当前宿主明确提供免费、免登录免 Key 且支持参考音频克隆的豆包工具时自动生成；否则请用户在剪映按当前声线朗读 script.csv 全部口播行（第一行是书名），并使用对应 intro。TTS 一次生成“今天分享的是”加 approved script 全部行；保留开场原速，按 FFmpeg 静音边界分离并补静音至对应 intro 时长。Whisper 只检查 TTS 内容，不提供时间戳；字幕仍使用 script.csv 原文，body timings 由 FFmpeg 静音边界生成。
 7. 时间轴制作：运行 `scripts/create-body-timings.mjs`，通过 FFmpeg 静音边界生成口播时间轴。`script.csv` 是唯一字幕文本真源；Whisper 仅用于 TTS 内容检查，不提供时间戳，也不因常见错字或简繁差异拦截。停顿边界不足时使用现有时长回退并标记复核，不能因 Whisper 不可用阻止剪映音频继续制作。
@@ -57,7 +57,7 @@ episodes/<book>/
   renders/      # local, ignored
 ```
 
-`script.csv` 使用 `display_title` 关联的书籍和唯一活动版本；第一行 `order=1` 是书名口播，后续各行是正文；所有行都是字幕文本真源。`prompts.csv` 记录当前图片提示词、生成工具、来源和审核状态。
+`script.csv` 使用 `display_title` 关联的书籍和唯一活动版本；第一行 `order=1` 是书名口播，只显示在画面顶部；后续正文行是底部字幕文本真源。`prompts.csv` 记录当前图片提示词、生成工具、来源和审核状态。
 
 ## 音频约定
 
@@ -66,7 +66,7 @@ episodes/<book>/
 - 口播统一使用 `story` 预设处理。剪映导出的正文音频先在 finalize 阶段经 `afftdn` 降噪（仅剪映路径），再做 story 处理；渲染环节不对 canonical 重复降噪。
 - 时间轴产物必须匹配对应的 `scriptVersion`；字幕文本始终以 `script.csv` 为准，不能直接使用 ASR 原文。
 - `create-body-timings.mjs` 以 FFmpeg 静音边界切分时间轴；`script.csv` 是字幕文本依据。Whisper 只用于豆包 TTS 的内容复核，不参与时间戳门控；容忍转写错字。静音分段不足时使用现有时长估算并标记 Agent 复核；Whisper 不可用时不阻断剪映音频流程。
-- `script.csv` 每一行保持一个完整朗读单元；渲染器优先按逗号、句号、问号等标点分句，每个分句控制在约 12 个汉字以内，过长分句再在内部均衡换行，不能为了排版改动字幕真源。
+- 正文 `script.csv` 每一行是一段简短口播字幕，不含标点或空白；长句按语义与停顿拆分，过短相邻片段可合并。书名 `order=1` 仍需口播，但不生成底部字幕。字幕文本逐行沿用 `script.csv`，渲染器不再按标点二次切分。
 - 接受图片组前，把入选图片放在一起检查，并在 prompts 或审核记录中逐张注明主体、场景/构图和主色方向。相邻帧避免重复人物、场景或构图，除非叙事需要连续性；仅色温相近不构成打回理由。
 - 几分钟以上的渲染通过持久终端/执行会话启动并轮询至进程退出；核对退出状态和产物后再更新工作流状态，不用会丢失退出诊断的脱离式后台命令。
 - 脚本变更导致已审阅的 `illustrated` 或 `voiced` 步骤 stale 时，重新检查对应资产，并用 `<step>@<active-script-version>:<review statement> <checked>/<expected> <items>` 格式提供复核记录。`voiced` 示例：`voiced@A:逐句核听 18/18 行，并确认全部与当前稿逐行一致`；`illustrated` 需核对一张 bridge 加上全部正文氛围图。执行 `node scripts/workflow-state.mjs revalidate "<书名>" <illustrated|voiced> --evidence '<复核记录>'`。该命令只接受仍有效的脚本验证/批准状态和有效产物；不要手改状态文件或指纹。

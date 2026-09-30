@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-// Body timing generation. Subtitle truth: one caption per script row (clause),
-// text ALWAYS from script.csv (punctuation stripped). The timeline is owned by
+// Body timing generation. Subtitle truth: one caption per script body row,
+// using its exact text from script.csv. The order-1 book title is spoken and
+// shown at the top of the intro, so it is not a bottom subtitle. The timeline is owned by
 // the detected speech segments — FFmpeg silencedetect silence boundaries, NOT
 // ASR timestamps. When the segment count equals the script row count, pair
 // segment i with row i one-to-one. A cloned voiceover may head with the spoken
@@ -150,9 +151,9 @@ try {
   console.warn(`Silence detection unavailable; continuing with full audio duration: ${error.message}`);
 }
 
-// Subtitle truth: one caption per script BODY row (clause), text always from
-// script.csv (punctuation stripped). The order-1 row is the book-title line
-// used to voice the opener; it is never a caption. The timeline is owned by
+// Subtitle truth: one caption per script BODY row, using exact text from
+// script.csv. The order-1 row is the spoken book-title line shown at the top;
+// it is never a bottom caption. The timeline is owned by
 // the detected speech segments — silence boundaries, not ASR timestamps. When
 // the segment count equals the body-row count, pair segment i with row i
 // one-to-one. A cloned voiceover may head with the spoken book title (a short
@@ -163,10 +164,7 @@ try {
 // review.
 const bodyRows = rows.filter((row) => Number(row.order) !== 1);
 const bodyTextByOrder = new Map(
-  bodyRows.map((row) => [
-    Number(row.order),
-    String(row.text || "").replace(/[，。！？；：、,.!?;:"“”‘’（）()\s]/gu, ""),
-  ]),
+  bodyRows.map((row) => [Number(row.order), String(row.text || "")]),
 );
 const hasLeadTitleSegment = speechSegments.length === bodyRows.length + 1
   && speechSegments[0].end - speechSegments[0].start < 3;

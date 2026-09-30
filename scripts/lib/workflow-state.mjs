@@ -426,10 +426,13 @@ function assessArtifacts(episodeDir, step) {
         .sort((left, right) => Number(left.order) - Number(right.order))
         .map((row) => Number(row.order));
     } catch {}
-    const captionsMatchScript = Array.isArray(timings?.captions)
-      && timings.captions.length > 0
-      && timings.captions.every((caption, index) => index === 0
-        || Number(caption.order) === Number(timings.captions[index - 1].order) + 1);
+    const expectedCaptionOrders = scriptOrders.filter((order) => order !== 1);
+    const captionOrders = Array.isArray(timings?.captions)
+      ? timings.captions.map((caption) => Number(caption.order))
+      : [];
+    const captionsMatchScript = expectedCaptionOrders.length > 0
+      && captionOrders.length === expectedCaptionOrders.length
+      && expectedCaptionOrders.every((order, index) => captionOrders[index] === order);
     const captionsHaveValidChronology = captionsMatchScript
       && timings.captions.every((caption, index) => {
         if (
