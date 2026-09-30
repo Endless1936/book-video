@@ -34,6 +34,7 @@
 ### 长文案处理
 - Whisper 仅用于 TTS 内容检查；停顿分段与字幕时间戳使用 FFmpeg 静音边界。
 - Whisper 的同音别字是正常现象；字幕真源永远是 approved 的 script.csv。
+- 剪映导出音频自带高频底噪，进入 finalize 时会先经 afftdn（nr=18, nf=-45）降噪再做 story 处理，避免响度标准化把句间停顿的沙沙声放大。豆包 TTS 不做此处理。
 
 ## 2. 氛围配图（image_gen）
 

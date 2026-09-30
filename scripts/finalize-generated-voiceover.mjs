@@ -307,9 +307,16 @@ const manifestCandidate = `${generatedIntroManifestPath}.${suffix}.json`;
 try {
   const pcmFormat = "aresample=48000,aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo";
   const bodySourceStart = generatedIntroSplit?.bodyStart || 0;
+  // Jianying exports carry a high-frequency noise floor that loudness
+  // normalization later amplifies into audible hiss between sentences. Reduce
+  // it at the source, before the story preset; TTS output is left untouched.
+  const sourceDenoise = voiceSource === "jianying"
+    ? ["afftdn=nr=18:nf=-45"]
+    : [];
   const bodyFilters = [
     `atrim=start=${bodySourceStart.toFixed(6)}`,
     "asetpts=PTS-STARTPTS",
+    ...sourceDenoise,
     pcmFormat,
   ].join(",");
   runFfmpeg([
