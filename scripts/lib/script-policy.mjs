@@ -1,5 +1,12 @@
-export const MAX_BODY_SCRIPT_LINES = 21;
+export const MAX_BODY_SCRIPT_LINES = 40;
 export const MAX_BODY_SCRIPT_CHARS = 220;
+
+// Subtitle truth: one clause per line, and a clause carries NO punctuation —
+// no commas, no full stops, no quotes, no spaces. Captions must render a
+// single line without wrapping; punctuation would force a wrap or split the
+// clause. The order-1 book-title row is exempt (it voices the opener, never a
+// caption, and legitimately carries 书名号).
+const BODY_PUNCTUATION_PATTERN = /[\p{P}\s]/u;
 
 function normalizeTitle(value) {
   return Array.from(String(value || "").normalize("NFKC").toLocaleLowerCase("zh-CN"))
@@ -29,6 +36,10 @@ export function validateBodyScript(rows, { episodeTitle = "" } = {}) {
   if (bodyLines > MAX_BODY_SCRIPT_LINES) errors.push(`正文最多 ${MAX_BODY_SCRIPT_LINES} 行，当前 ${bodyLines} 行`);
   if (hasTitleRow && lines > MAX_BODY_SCRIPT_LINES + 1) {
     errors.push(`口播总行数最多 ${MAX_BODY_SCRIPT_LINES + 1} 行（含书名），当前 ${lines} 行`);
+  }
+  const bodyRowsWithPunctuation = bodyRows.filter((row) => BODY_PUNCTUATION_PATTERN.test(String(row.text || "")));
+  if (bodyRowsWithPunctuation.length) {
+    errors.push(`正文必须一分句一行且不含任何标点（逗号、句号等）与空白，当前违规行：${bodyRowsWithPunctuation.map((row) => row.order).join("、")}`);
   }
   if (chars > MAX_BODY_SCRIPT_CHARS) errors.push(`正文最多 ${MAX_BODY_SCRIPT_CHARS} 个汉字，当前 ${chars} 个字符`);
   if (!validOrderSequence) errors.push(`正文 order 必须唯一且连续为 1..${lines}`);

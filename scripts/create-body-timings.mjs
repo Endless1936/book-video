@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 
-// Body timing generation from FFmpeg silencedetect speech boundaries only.
-// Map speech segments to script rows in order. Extra boundaries are coalesced;
-// too few boundaries use duration estimates. Both corrections are marked for review.
+// Body timing generation. Subtitle truth: one caption per script row (clause),
+// text ALWAYS from script.csv (punctuation stripped). The timeline is owned by
+// the detected speech segments — FFmpeg silencedetect silence boundaries, NOT
+// ASR timestamps. When the segment count equals the script row count, pair
+// segment i with row i one-to-one. A cloned voiceover may head with the spoken
+// book title (a short leading segment before the first script line): when
+// exactly one extra leading segment exists, it is skipped and the remaining
+// segments pair 1:1 with the rows. Any other count mismatch is reconciled by
+// merging nearby boundaries or estimating from the detected speech duration,
+// and both corrections are marked for review.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -143,27 +150,50 @@ try {
   console.warn(`Silence detection unavailable; continuing with full audio duration: ${error.message}`);
 }
 
-// Do not infer that an extra segment is an opener from its count. Reconcile
-// every count mismatch below by merging nearby boundaries or estimating from
-// the detected speech duration, then flag the result for review.
-const mappedSegments = speechSegments;
+// Subtitle truth: one caption per script BODY row (clause), text always from
+// script.csv (punctuation stripped). The order-1 row is the book-title line
+// used to voice the opener; it is never a caption. The timeline is owned by
+// the detected speech segments — silence boundaries, not ASR timestamps. When
+// the segment count equals the body-row count, pair segment i with row i
+// one-to-one. A cloned voiceover may head with the spoken book title (a short
+// leading segment before the first script line): when exactly one extra
+// leading segment exists, it is skipped and the remaining segments pair 1:1
+// with the rows. Any other count mismatch is reconciled by merging nearby
+// boundaries or estimating from the detected speech duration, and flagged for
+// review.
+const bodyRows = rows.filter((row) => Number(row.order) !== 1);
+const bodyTextByOrder = new Map(
+  bodyRows.map((row) => [
+    Number(row.order),
+    String(row.text || "").replace(/[，。！？；：、,.!?;:"“”‘’（）()\s]/gu, ""),
+  ]),
+);
+const hasLeadTitleSegment = speechSegments.length === bodyRows.length + 1
+  && speechSegments[0].end - speechSegments[0].start < 3;
+const normalizedSegments = hasLeadTitleSegment ? speechSegments.slice(1) : speechSegments;
 
 let captions;
 let fallbackReason = null;
 let method = "silence-boundary";
 let requiresAgentReview = Boolean(silenceFailure);
 try {
-  const normalizedSegments = mappedSegments.length === rows.length
-    ? mappedSegments
-    : coalesceSpeechSegments(mappedSegments, rows.length);
-  captions = buildCaptionTimings(rows.map((row) => row.order), normalizedSegments);
-  if (mappedSegments.length !== rows.length) {
+  if (normalizedSegments.length === bodyRows.length) {
+    captions = buildCaptionTimings(bodyRows.map((row) => Number(row.order)), normalizedSegments)
+      .map((caption) => ({ ...caption, text: bodyTextByOrder.get(Number(caption.order)) || "" }));
+    if (hasLeadTitleSegment) {
+      console.warn(`[timing] Silence-boundary captions: skipped 1 leading title segment; ${normalizedSegments.length} segments === ${bodyRows.length} script body rows, paired one-to-one, text from script.csv.`);
+    }
+  } else {
+    const coalesced = coalesceSpeechSegments(normalizedSegments, bodyRows.length);
+    captions = buildCaptionTimings(bodyRows.map((row) => Number(row.order)), coalesced)
+      .map((caption) => ({ ...caption, text: bodyTextByOrder.get(Number(caption.order)) || "" }));
     requiresAgentReview = true;
-    fallbackReason = `Found ${speechSegments.length} speech segments for ${rows.length} script rows; merged the shortest adjacent gaps to match.`;
+    fallbackReason = `Found ${speechSegments.length} speech segments for ${bodyRows.length} script body rows; merged the shortest adjacent gaps to match.`;
     console.warn(`[timing] ${fallbackReason}`);
   }
 } catch (error) {
-  captions = buildEstimatedCaptionTimings(rows, mappedSegments, duration);
+  captions = buildEstimatedCaptionTimings(bodyRows, speechSegments, duration)
+    .map((caption) => ({ ...caption, text: bodyTextByOrder.get(Number(caption.order)) || "" }));
   method = "speech-duration-estimate";
   fallbackReason = error.message;
   requiresAgentReview = true;

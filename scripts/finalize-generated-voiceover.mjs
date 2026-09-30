@@ -279,6 +279,18 @@ if (voiceSource === "tts") {
         greeting: speechSegments[0],
         bodyStart: speechSegments[1].start,
       };
+      // A cloned TTS opener may itself be two speech segments: the greeting
+      // ("今天分享的是") followed by the book title read out loud. In that case
+      // the greeting stays in the intro and the spoken title becomes the HEAD
+      // of the body voiceover — right before the first script line, so the
+      // title and the body captions are voiced together through the same
+      // story processing and the same timeline. The body start is pulled back
+      // slightly so the leading consonant of the title (e.g. "被") is not cut
+      // in half by the silence boundary.
+      if (speechSegments.length >= 3) {
+        generatedIntroSplit.title = speechSegments[1];
+        generatedIntroSplit.bodyStart = Math.max(0, speechSegments[1].start - 0.08);
+      }
       standardIntroDuration = validateVoiceoverArtifact(standardIntroPath).duration;
     }
   }
@@ -347,7 +359,13 @@ try {
     { candidate: bodyCandidate, destination: finalPath, backup: `${finalPath}.${suffix}.previous` },
   ];
   if (generatedIntroSplit) {
-    const greetingDuration = generatedIntroSplit.greeting.end - generatedIntroSplit.greeting.start;
+    // The intro voiceover is the greeting only ("今天分享的是"), padded to the
+    // shared intro duration. The spoken book title is NOT merged into the
+    // greeting and NOT cut into its own track: it heads the body voiceover
+    // (see bodyStart above) so it is processed and timed together with the
+    // body captions.
+    const introEnd = generatedIntroSplit.greeting.end;
+    const greetingDuration = introEnd - generatedIntroSplit.greeting.start;
     if (greetingDuration > standardIntroDuration) {
       throw new WorkflowError(
         `The generated greeting (${greetingDuration.toFixed(3)}s) is longer than the shared intro (${standardIntroDuration.toFixed(3)}s); it cannot be kept at natural speed without being cut off.`,
@@ -355,7 +373,7 @@ try {
       );
     }
     const introFilters = [
-      `atrim=start=${generatedIntroSplit.greeting.start.toFixed(6)}:end=${generatedIntroSplit.greeting.end.toFixed(6)}`,
+      `atrim=start=${generatedIntroSplit.greeting.start.toFixed(6)}:end=${introEnd.toFixed(6)}`,
       "asetpts=PTS-STARTPTS",
       "apad",
       `atrim=duration=${standardIntroDuration.toFixed(6)}`,
@@ -383,7 +401,9 @@ try {
       introDurationSeconds: introArtifact.duration,
       greetingText: contentCheck.diagnostics.detectedLeadIn?.text || "今天分享的是",
       greetingSpeechEndSeconds: greetingDuration,
-      titleSpeechStartSeconds: generatedIntroSplit.bodyStart,
+      titleSpeechStartSeconds: generatedIntroSplit.title
+        ? generatedIntroSplit.title.start
+        : generatedIntroSplit.bodyStart,
     };
     fs.writeFileSync(manifestCandidate, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
     filesToReplace.push(

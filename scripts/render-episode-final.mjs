@@ -36,8 +36,11 @@ installWorkflowDiagnostics({
   ],
 });
 const HYPERFRAMES_VERSION = "0.7.33";
-const INTRO_TRIM_SECONDS = INTRO_VIDEO_TRIM_SECONDS;
-const INTRO_OFFSET_MS = Math.round(INTRO_TRIM_SECONDS * 1000);
+// The intro video/audio offset must equal the ACTUAL intro voiceover length
+// (the generated clone is ~3.03s, not the template constant 2.38s), otherwise
+// the book-title outro overlaps the first body caption. Re-measured below.
+let introTrimSeconds = INTRO_VIDEO_TRIM_SECONDS;
+let introOffsetMs = Math.round(introTrimSeconds * 1000);
 const FINAL_BGM_BASE_VOLUME = 0.32;
 const FINAL_BGM_GAIN_DB = Number(process.env.FINAL_BGM_GAIN_DB || "0");
 if (!Number.isFinite(FINAL_BGM_GAIN_DB)) {
@@ -135,10 +138,17 @@ if (fs.existsSync(generatedIntroManifest)) {
     console.warn(`Ignoring stale generated intro metadata: ${error.message}`);
   }
 }
+// Measure the actual intro voiceover so body captions start exactly when the
+// body speech starts (fixes the book-title outro overlapping caption 1).
+{
+  const measured = Number(probeMedia(introVoice).format?.duration || 0);
+  if (Number.isFinite(measured) && measured > 0) {
+    introTrimSeconds = measured;
+    introOffsetMs = Math.round(measured * 1000);
+  }
+}
 const introStoryVoice = path.join(previewDir, "audio", "intro-voiceover-story.mp3");
-const bodyStoryVoice = generatedAudioPairIsCurrent
-  ? bodyVoice
-  : path.join(audioDir, "body-voiceover-story.mp3");
+const bodyStoryVoice = path.join(audioDir, "body-voiceover-story.mp3");
 const bgmMixSuffix =
   FINAL_BGM_GAIN_DB === 0
     ? "bgm-standard"
@@ -298,7 +308,7 @@ if (!fs.existsSync(INTRO_SCROLL_SFX_PATH)) {
 const bgmPath = getBgmPath(bgmArg);
 console.log(`Using BGM: ${path.basename(bgmPath)}`);
 const bodyDuration = readBodyDuration();
-const finalDuration = Number((INTRO_TRIM_SECONDS + bodyDuration).toFixed(2));
+const finalDuration = Number((introTrimSeconds + bodyDuration).toFixed(2));
 if (finalDuration > 60 && !ALLOW_OVER_60_SECONDS) {
   throw new Error(`Planned final duration is ${finalDuration.toFixed(2)}s; maximum is 60s`);
 }
@@ -308,9 +318,7 @@ fs.mkdirSync(rendersDir, { recursive: true });
 run("node", ["scripts/create-episode-preview.mjs", episodeName, scriptVersion]);
 fs.mkdirSync(finalCandidateDir, { recursive: true });
 run("node", ["scripts/process-voiceover.mjs", introVoice, introStoryVoice, "story"]);
-if (!generatedAudioPairIsCurrent) {
-  run("node", ["scripts/process-voiceover.mjs", bodyVoice, bodyStoryVoice, "story"]);
-}
+run("node", ["scripts/process-voiceover.mjs", bodyVoice, bodyStoryVoice, "story"]);
 run("npx", ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, "render", "--quality", "standard", "--output", "renders/intro.mp4"], { cwd: introDir });
 run("npx", ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, "render", "--quality", "standard", "--output", "renders/body.mp4"], { cwd: bodyDir });
 
@@ -332,11 +340,11 @@ run("ffmpeg", [
   INTRO_SCROLL_SFX_PATH,
   "-filter_complex",
   [
-    `[0:v]trim=0:${INTRO_TRIM_SECONDS},setpts=PTS-STARTPTS[v0]`,
+    `[0:v]trim=0:${introTrimSeconds},setpts=PTS-STARTPTS[v0]`,
     `[1:v]trim=0:${bodyDuration},setpts=PTS-STARTPTS[v1]`,
     "[v0][v1]concat=n=2:v=1:a=0[v]",
     "[2:a]asetpts=PTS-STARTPTS,aresample=48000,volume=1.0[introa]",
-    `[3:a]asetpts=PTS-STARTPTS,aresample=48000,adelay=${INTRO_OFFSET_MS}|${INTRO_OFFSET_MS},volume=1.0[bodya]`,
+    `[3:a]asetpts=PTS-STARTPTS,aresample=48000,adelay=${introOffsetMs}|${introOffsetMs},volume=1.0[bodya]`,
     `[4:a]atrim=0:${finalDuration},asetpts=PTS-STARTPTS,aresample=48000,volume=${FINAL_BGM_VOLUME}[bgm]`,
     `[5:a]atrim=0:${introScrollSfxDuration},asetpts=PTS-STARTPTS,aresample=48000,volume=${INTRO_SCROLL_SFX_VOLUME},afade=t=in:st=0:d=0.01,afade=t=out:st=${introScrollSfxFadeOutStart}:d=${INTRO_SCROLL_SFX_FADE_OUT_SECONDS},adelay=${introScrollSfxDelayMs}|${introScrollSfxDelayMs}[scrollsfx]`,
     "[introa][bodya][bgm][scrollsfx]amix=inputs=4:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95,loudnorm=I=-14.0:TP=-1.0:LRA=7.0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a]",
@@ -365,7 +373,13 @@ run("ffmpeg", [
 
 const finalProbe = probeMedia(candidateOutputPath);
 const scriptRows = readCsv(scriptPath).rows.filter((row) => row.version === scriptVersion);
-const subtitleCount = scriptRows.length;
+let subtitleCount = scriptRows.length;
+try {
+  const timings = JSON.parse(fs.readFileSync(timingsPath, "utf8"));
+  if (Array.isArray(timings.captions) && timings.captions.length > 0) {
+    subtitleCount = timings.captions.length;
+  }
+} catch {}
 const requiredImageNames = [
   "result-bridge.png",
   ...getAtmosphereImageNames(scriptRows.filter((row) => Number(row.order) !== 1).length),
