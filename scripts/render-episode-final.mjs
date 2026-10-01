@@ -148,12 +148,11 @@ if (fs.existsSync(generatedIntroManifest)) {
   }
 }
 const introStoryVoice = path.join(previewDir, "audio", "intro-voiceover-story.mp3");
-const bodyStoryVoice = path.join(audioDir, "body-voiceover-story.mp3");
 const bgmMixSuffix =
   FINAL_BGM_GAIN_DB === 0
     ? "bgm-standard"
     : `bgm-mix-${FINAL_BGM_GAIN_DB > 0 ? "plus" : "minus"}${Math.abs(FINAL_BGM_GAIN_DB)}db`;
-const outputPath = path.join(rendersDir, `${slug}-final-${bgmSlug}-story-voice-${bgmMixSuffix}.mp4`);
+const outputPath = path.join(rendersDir, `${slug}-final-${bgmSlug}-voice-${bgmMixSuffix}.mp4`);
 const candidateOutputPath = path.join(finalCandidateDir, path.basename(outputPath));
 const introScrollSfxDuration = Number((INTRO_SCROLL_SFX_END_SECONDS - INTRO_SCROLL_SFX_START_SECONDS).toFixed(2));
 const introScrollSfxDelayMs = Math.round(INTRO_SCROLL_SFX_START_SECONDS * 1000);
@@ -317,8 +316,12 @@ fs.mkdirSync(rendersDir, { recursive: true });
 
 run("node", ["scripts/create-episode-preview.mjs", episodeName, scriptVersion]);
 fs.mkdirSync(finalCandidateDir, { recursive: true });
+// The body voiceover already went through the story preset in
+// finalize-generated-voiceover.mjs; running it through story again here
+// double-processed the voice (louder voice, smaller BGM, extra noise).
+// Only the intro (which is never story-processed upstream) goes through
+// story here, so both voices keep a consistent timbre.
 run("node", ["scripts/process-voiceover.mjs", introVoice, introStoryVoice, "story"]);
-run("node", ["scripts/process-voiceover.mjs", bodyVoice, bodyStoryVoice, "story"]);
 run("npx", ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, "render", "--quality", "standard", "--output", "renders/intro.mp4"], { cwd: introDir });
 run("npx", ["--yes", `hyperframes@${HYPERFRAMES_VERSION}`, "render", "--quality", "standard", "--output", "renders/body.mp4"], { cwd: bodyDir });
 
@@ -331,7 +334,7 @@ run("ffmpeg", [
   "-i",
   introStoryVoice,
   "-i",
-  bodyStoryVoice,
+  bodyVoice,
   "-stream_loop",
   "-1",
   "-i",
